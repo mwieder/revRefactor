@@ -1420,15 +1420,7 @@ end RenameVariable
 * Returns: the string with replacements made
 */
 private function DoReplace pScript, pOutgoingString, pIncomingString
-   if token -1 of pScript is pOutgoingString then
-      put numtochar(3) after token -1 of pScript
-   end if
-   replace pOutgoingString & space with pOutgoingString & numtochar(3) & space in pScript
-   replace pOutgoingString & comma with pOutgoingString & numtochar(3) & comma in pScript
-   replace pOutgoingString & "(" with pOutgoingString & numtochar(3) & "(" in pScript
-   replace pOutgoingString & ")" with pOutgoingString & numtochar(3) & ")" in pScript
-   replace pOutgoingString & cr with pOutgoingString & numtochar(3) & cr in pScript
-   replace pOutgoingString & numtochar(3) with pIncomingString in pScript
+   put replaceText(pScript, "\b"&pOutgoingString&"\b", pIncomingString) into pScript
    return pScript
 end DoReplace
 
