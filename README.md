@@ -7,13 +7,13 @@ Refactoring support for the LiveCode Script Editor
     The Refactoring menuItem will also appear in the contextual menu of the Script Editor.
     The Refactoring menu is inspired by the JetBrains refactoring support in RubyMine, etc.
 
-Rename Handler
+* Rename Handler
     Allows you to rename in just the current script or all scripts in the stack.
 
-Rename Variable
+* Rename Variable
     Both Rename Handler and Rename Variable change all uses of the object.
 
-Convert Literal To Constant
+* Convert Literal To Constant
     Creates a constant for the selected literal value.
     For instance, converts the string literal "hello" to
     constant kHello = "hello"
@@ -22,20 +22,20 @@ Convert Literal To Constant
     instead of
       put "hello" into tVariable
 
-Change Signature
+* Change Signature
     Change the parameter list for a command or function.
     For instance, change "myCommand pKey" to "myCommand pKey, pValue"
     Modifying parameters will modify calls to the handler in all scripts in the stack.
 
-Safe Delete
+* Safe Delete
     Only deletes the handler/variable if nothing is using it.
     Otherwise you get a warning specifying where it's used.
 
-Move Handler To
-Copy Handler To
+* Move Handler To
+* Copy Handler To
     These allow you to select a new home for the selected handler.
 
-Create Getter and Setter
+* Create Getter and Setter
     Allow external access to a script local variable.
     The handlers will be named after the variable name:
     local ArrayName
@@ -44,7 +44,7 @@ Create Getter and Setter
     and
       function ArrayName()
 
-Add Documentation
+* Add Documentation
     Creates documentation for a handler in the form
     /**
     * HandlerName
@@ -54,52 +54,53 @@ Add Documentation
     */
     The documentation format is stored as a custom property template and can be modified if desired.
 
-Add Test
+* Add Test
     Adds a template unit test for the selected handler to a file in the same folder as the stack.
     The file has the same name as the stack with the ".tests" extension.
     The tests file is intended to be run using Ah, Software's TestRunner unit testing stack.
     The unit test format is stored as a custom property template.
     Modifying it will probably cause it to cease functioning.
 
-Convert Global To
+* Convert Global To
     Script Local
     Getter and Setter
     Property
 
-Convert Variable To
+* Convert Variable To
     Script Local
     Parameter
     Property
 
-Extract To
+* Extract To
     Creates a new handler from the selected block of code in the current script.
 
-Find Orphan Code
+* Find Orphan Code
     Displays a list of unused local variables and uncalled handlers.
     Double-click a list item to select it in the script editor.
 
-Undo Last Refactor
+* Undo Last Refactor
     There's a full undo first-in-last-out stack mechanism for those oops moments.
     Issues a warning if you attempt to undo changes already saved to disk.
 
-Go Back (contextual menu only)
+* Go Back (contextual menu only)
     Not strictly part of a refactoring process, but since I was reworking the Edit menu anyway...
     After a "Go to definition" call, this gets you back to where you were.
 
 * Known issues
-    Renaming a variable across an entire script will rename string literals that match the variable name, i.e.,
+
+Renaming a variable across an entire script will rename string literals that match the variable name, i.e.,
 
     local bar
     myHandler bar
     dispatch "myHandler" to button 1 with "bar"
 
-    if you rename bar to foo in the entire script you'll end up with
+if you rename bar to foo in the entire script you'll end up with
 
     local foo
     myHandler foo
     dispatch "myHandler" to button 1 with "foo"
 
-    where the string literal "foo" shouldn't be renamed.
-    Renaming in a single handler works properly.
+where the string literal "foo" shouldn't be renamed.
+Renaming in a single handler works properly.
 
     
