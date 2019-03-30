@@ -451,9 +451,10 @@ private command RemoveDeclaration pVariableName, pType, pLine, pOffset, @pScript
       else
          put line tLinePos of pScript into tLine
          put replacetext(tLine, "(?i)[, ]*"& regexWholeWordFrom(pVariableName), "") into tReplacedLine
-         if char -1 of tReplacedLine is "," then
-            delete char -1 of tReplacedLine
-         end if
+         --         if char -1 of tReplacedLine is "," then
+         --            delete char -1 of tReplacedLine
+         --         end if
+         chopIf comma, tReplacedLine
          replace "global," with "global " in tReplacedLine
          replace "local," with "local " in tReplacedLine
          if word 1 to -1 of tReplacedLine is not empty then
@@ -467,15 +468,15 @@ end RemoveDeclaration
 private function regexWholeWordFrom pWord
    return "\b" & pWord & "\b"
 end regexWholeWordFrom
-
-/**
-* ConvertLocalVariableTo
-* convert local variable to
-*  script-local variable
-*  parameter of the containing handler
-*  property
-*/
-private command ConvertLocalVariableTo pVariableName, pType
+   
+   /**
+   * ConvertLocalVariableTo
+   * convert local variable to
+   *  script-local variable
+   *  parameter of the containing handler
+   *  property
+   */
+   private command ConvertLocalVariableTo pVariableName, pType
    local tType
    local tScript
    local tLocalScript --, tTestScript
@@ -780,6 +781,7 @@ private function GetOldParams pLine
    -- whose keys are the parameters
    set the itemdelimiter to comma
    put word 3 to -1 of pLine into tOldParams
+   put token 1 to -1 of tOldParams into tOldParams
    repeat with x=1 to the number of items in tOldParams
       put x into tParamsArray[word 1 of item x of tOldParams]
    end repeat
@@ -849,23 +851,25 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
    local tTestParameters
    local tTestScript
    local tOffset
-   local tLineNumber, tLineNumbers, tLineNumberEnd
-   local tNewLine
-   local tParenOffset
-   local tFuncParams -- true if this is a function call
-   local tNewNumParameters, tOldNumParameters
+   local tLineNumber, tLineNumbers
+   local tFuncParams -- true if ther is a function call on the current line
+   local tNewNumParameters
+   local tOldNumParameters
    local tParams
    local x
-   local tEndOfOldParameters
+   local tEndOfOldParameters -- note: this will be 0 if there are no original parameters
    
    set the itemDelimiter to comma
    set the wholematches to true
    -- replace parameters with actuals
-   put pScript into tTestScript
    put 1 into tLineNumber
    put empty into tParams
+   put pScript into tTestScript
    repeat for each line tTestLine in tTestScript
-      put false into tFuncParams
+      put false into tFuncParams -- not a function until we say so
+      
+      -- allow for line continuations
+      local tLineNumberEnd
       put tLineNumber into tLineNumbers
       put tLineNumber into tLineNumberEnd
       repeat while "\" is char -1 of tTestLine
@@ -875,16 +879,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
       if tLineNumberEnd is not tLineNumber then
          put " to" && tLineNumberEnd after tLineNumbers
       end if
-      -- see if there is a function call on this line
-      put offset("(", tTestLine) into tParenOffset
-      if tParenOffset > 0 then
-         -- get the function parameters in the current line
-         put matchtext(tTestLine, "\((.*)\)", tTestParameters) into tFuncParams
-         put empty into char tParenOffset of tTestLine
-         replace ")" with empty in tTestLine
-         put length(tTestParameters) into tEndOfOldParameters
-      else
-      end if
       
       -- see if the word we're replacing is in this line
       -- this fails to match doSomething with "doSomething"
@@ -892,31 +886,77 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
       -- so we have to do this instead
       put offset(pHandlerName, tTestLine) into tOffset
       
-      -- if it is then
-      if tOffset > 0 and char tOffset-1 of tTestLine is not quote then
-         if (tOffset < tParenOffset) or (tParenOffset is 0) then
+      -- if the handler we're replacing is in this line then
+      if tOffset > 0 then
+         -- see if there is a function call on this line
+         local tParenOffset
+         put offset("(", tTestLine) into tParenOffset
+         if tParenOffset > 0 then
+            -- get the function parameters in the current line
+            put matchtext(tTestLine, "\((.*)\)", tTestParameters) into tFuncParams
+            put length(tTestParameters) into tEndOfOldParameters
+         else
+            -- command, not function
+            put offset(char -1 of token -1 of tTestLine, tTestLine)+1 into tEndOfOldParameters
+         end if
+         
+         local tShouldHandleThis
+         local tCharPos
+         local tQuotedParams
+         put false into tShouldHandleThis
+         switch word 1 of tTestLine
+            case "send"
+               put wordoffset ("to", tTestLine) into tCharPos
+               put word 2 to tCharPos-1 of tTestLine into tParams
+               replace quote with empty in tParams
+               put token 2 to -1 of tParams into tTestParameters
+               put true into tShouldHandleThis
+               break
+            case "dispatch"
+               put wordoffset ("with", tTestLine) into tCharPos
+               put word tCharPos+1 to -1 of tTestLine into tParams
+               put token 1 to -1 of tParams into tQuotedParams
+               put tParams into tTestParameters
+               put true into tShouldHandleThis
+               break
+            case pHandlerName -- handler is first word in line
+               if tParenOffset is 0 or tOffset < tParenOffset then
+                  put true into tShouldHandleThis
+                  put word 2 to -1 of tTestLine into tParams
+                  put tParams into tTestParameters
+               end if
+               break
+            default
+               if tOffset < tParenOffset then
+               else
+                  break
+               end if
+            case "call"
+               put true into tShouldHandleThis
+               break
+         end switch
+         
+         if tShouldHandleThis then
             if word 1 of tTestLine is not in kKeywords then
                -- get the parameters of the line we're substituting into
                -- is this a function call?
                if tParenOffset > 0 then
                else
                   -- not a function call, get the command parameters
-                  put char tOffset+length(pHandlerName)+1 to -1 of tTestLine into tTestParameters
+                  --put token 2 to -1 of tTestLine into tTestParameters
                end if
                
                put the number of items in tTestParameters into tOldNumParameters
                
                -- replace the handler name
-               put DoReplace(tTestLine, pHandlerName, pNewHandlerName) into tNewLine
-               repeat with x=tLineNumber+1 to tLineNumberEnd
-                  put "--" before line x of pScript
-               end repeat
-               put tNewLine into line tLineNumber of pScript
+               put DoReplace(tTestLine, pHandlerName, pNewHandlerName) into tTestLine
+               put tTestLine into line tLineNumber of pScript
                
                put empty into tParams
-               -- replace the parameters
+               -- enable this test to leave func() (no parameters) intact
                if word 1 of tTestLine is not in "exit" then
                   
+                  -- replace the parameters
                   -- use whichever of tOldNumParameters or tNewNumParameters is bigger
                   put the number of elements in pNewParamsArray into tNewNumParameters
                   if tNewNumParameters < tOldNumParameters then
@@ -933,29 +973,60 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                         put item pNewParamsArray[tOriginalindex] of tTestParameters into tReplacement
                      else
                         -- delete the numtochar(3) from the beginning
-                        put char 2 to -1 of pNewParamsArray[tOriginalindex] into tReplacement
+                        put pNewParamsArray[tOriginalindex] into tReplacement
+                        if char 1 of tReplacement is numtochar(3) then
+                           delete char 1 of tReplacement
+                        end if
                      end if
                      
                      put tReplacement into item tOriginalIndex of tParams
-                  end repeat
-                  if char -1 of tParams is comma then
-                     delete char -1 of tParams
+                  end repeat -- with tOriginalindex=1 to tNewNumParameters
+                  chopIf comma, tParams
+                  if char 1 of tParams is comma then
+                     put q(" ") before tParams
                   end if
                   
-                  local tReplacementPosition
+                  local tReplacementPosition, tEndpoint
                   put length(pNewHandlerName) + tOffset into tReplacementPosition
+                  -- differentiate between a function and a command
                   if tFuncParams then
-                     put "(" before tParams
-                     put ") " after tParams
+                     put tReplacementPosition+tEndOfOldParameters into tEndpoint
+                     add 1 to tReplacementPosition
+                     put tParams into char tReplacementPosition to tEndpoint of line tLineNumber of pScript
                   else
-                     put space before tParams
-                  end if
-                  put tParams into char tReplacementPosition to tReplacementPosition+tEndOfOldParameters of line tLineNumber of pScript
-               end if
+                     -- cover the case where there's just a command with no orig parameters
+                     if tOldNumParameters < 1 then
+                        put space before tParams
+                     end if
+                     add 1 to tReplacementPosition
+                     put tReplacementPosition+tEndOfOldParameters into tEndpoint
+                     
+                     local tTokens
+                     switch word 1 of tTestLine
+                        case "call"
+                           put token 2 to -1 of tTestLine into tTokens
+                           if word 1 of tTokens is "function" then
+                              delete word 1 of tTokens
+                           end if
+                           put word 2 of tTokens into tTokens
+                           -- don't change call parameters
+                           break
+                        case "dispatch"
+                           put tTestParameters into tTokens
+                           breakpoint
+                           break
+                        case "send"
+                        default
+                           put tTestParameters into tTokens
+                     end switch
+                     put DoReplace(tTestLine, tTokens, tParams) into line tLineNumber of pScript
+                  end if -- tFuncParams
+                  
+               end if --  word 1 of tTestLine is not in "exit"
             end if
          else -- tOffset > tParenOffset
-         end if
-      end if
+         end if -- word 1 of tTestLine is not in kKeywords
+      end if -- (tOffset < tParenOffset) or (tParenOffset is 0)
       add 1 to tLineNumber
    end repeat
 end ChangeSignatureInScript
@@ -1180,6 +1251,25 @@ end GenerateTestFor
 function q pText
    return quote & pText & quote
 end q
+
+command unquote @pText
+   replace quote with numtochar(3) in pText
+end unquote
+
+private command chomp @pText
+   chopIf cr, pText
+end chomp
+
+private command chopIf pChar, @pText
+   if char -1 of pText is pChar then
+      chop pText
+   end if
+end chopIf
+
+private command chop @pText
+   delete char -1 of pText
+end chop
+
 /**
 *  AddDocsAtLine
 */
@@ -1243,7 +1333,8 @@ private function GenerateDocsFor pLine, pType, pHandler, pParameters
       repeat for each item tParam in pParameters
          put "*  " & word 1 of tParam  && ":" & cr after tParams
       end repeat
-      delete char -1 of tParams
+      --delete char -1 of tParams
+      chomp tParams
    else
       put "*" into tParams
    end if
@@ -1330,6 +1421,7 @@ private command RenameHandler pVarName
          put it into tNewName
          lock screen
          put DoReplace(tScript, pVarName, tNewName) into tScript
+         --ChangeSignatureInScript pVarName, tNewName, tEmptyArray, tScript
          SetScript tScript
          if tRenameType is kThisScript then
          else
@@ -1396,7 +1488,7 @@ private command RenameVariable pVariableName
                if char 1 to 3 of tLine is "end" then
                   exit repeat
                end if
-               if pVariableName is in tLine then
+               if pVariableName is in tLine and q(pVariableName) is not in tLine then
                   put DoReplace(tLine, pVariableName, tNewName) into tLine
                   put tLine into line tLineCount+tStartLineNumber of tScript
                end if
@@ -1420,7 +1512,24 @@ end RenameVariable
 * Returns: the string with replacements made
 */
 private function DoReplace pScript, pOutgoingString, pIncomingString
-   put replaceText(pScript, "\b"&pOutgoingString&"\b", pIncomingString) into pScript
+   local tScript
+   local tIsQuoted
+   
+   # regex "\b" for word boundaries doesn't respect quotes as bounds
+   # so we need to strip quotes and replace them at the end
+   unquote pScript
+   unquote pIncomingString
+   put token 1 to -1 of pScript into tScript
+   if quote is in pOutgoingString then
+      put true into tIsQuoted
+   end if
+   unquote pOutgoingString
+   if tIsQuoted is true then
+      put replaceText(tScript, "(?i)"& pOutgoingString, pIncomingString) into token 1 to -1 of pScript
+   else
+      put replaceText(tScript, "(?i)"& regexWholeWordFrom(pOutgoingString), pIncomingString) into token 1 to -1 of pScript
+   end if
+   replace numtochar(3) with quote in pScript
    return pScript
 end DoReplace
 
@@ -1996,9 +2105,10 @@ private function listUndeclaredVariablesIn pScript
                put token 2 of tTest into tCurrentHandler
                repeat for each item tParam in token 3 to -1 of tTest
                   put word 1 of tParam into tParam
-                  if char 1 of tParam is "@" then
-                     delete char 1 of tParam
-                  end if
+                  --                  if char 1 of tParam is "@" then
+                  --                     delete char 1 of tParam
+                  --                  end if
+                  chopIf "@", tParam
                   put tCurrentHandler && tParam & cr after tLocals
                end repeat
                break
