@@ -7,6 +7,9 @@ Refactoring support for the LiveCode Script Editor
     The Refactoring menuItem will also appear in the contextual menu of the Script Editor.
     The Refactoring menu is inspired by the JetBrains refactoring support in RubyMine, etc.
 
+If you just want to download the Plugin itself, it's now in the "Plugin" folder.
+You don't need all the script files unless you want to submit pull requests.
+
 ### Rename Handler
 Allows you to rename in just the current script or all scripts in the stack.
 
@@ -71,14 +74,14 @@ The unit test format is stored as a custom property template.
 Modifying it will probably cause it to cease functioning.
 
 ### Convert Global To
-Script Local
-Getter and Setter
-Property
+* Script Local
+* Getter and Setter
+* Property
 
 ### Convert Variable To
-Script Local
-Parameter
-Property
+* Script Local
+* Parameter
+* Property
 
 ### Extract To
 Creates a new handler from the selected block of code in the current script.
