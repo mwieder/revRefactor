@@ -85,3 +85,21 @@ Undo Last Refactor
 Go Back (contextual menu only)
     Not strictly part of a refactoring process, but since I was reworking the Edit menu anyway...
     After a "Go to definition" call, this gets you back to where you were.
+
+* Known issues
+    Renaming a variable across an entire script will rename string literals that match the variable name, i.e.,
+
+    local bar
+    myHandler bar
+    dispatch "myHandler" to button 1 with "bar"
+
+    if you rename bar to foo in the entire script you'll end up with
+
+    local foo
+    myHandler foo
+    dispatch "myHandler" to button 1 with "foo"
+
+    where the string literal "foo" shouldn't be renamed.
+    Renaming in a single handler works properly.
+
+    
