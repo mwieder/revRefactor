@@ -287,6 +287,9 @@ private function scriptFromEditor pObject
       edit the script of pObject
    end if
    dispatch function "textGetScript" to group "Editor" of stack main
+   if it is "unhandled" then
+      throw "unhandled function textGetScript"
+   end if
    put the result into tReturnValue
    return tReturnValue
 end scriptFromEditor
@@ -1015,7 +1018,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                            break
                         case "dispatch"
                            put tTestParameters into tTokens
-                           breakpoint
                            break
                            --case "send"
                         default
