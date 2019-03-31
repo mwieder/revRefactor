@@ -902,8 +902,10 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
          
          local tShouldHandleThis
          local tCharPos
+         --local tIsQuoted
          local tQuotedParams
          put false into tShouldHandleThis
+         --put false into tIsQuoted
          switch word 1 of tTestLine
             case "send"
                put wordoffset ("to", tTestLine) into tCharPos
@@ -943,7 +945,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                if tParenOffset > 0 then
                else
                   -- not a function call, get the command parameters
-                  --put token 2 to -1 of tTestLine into tTestParameters
                end if
                
                put the number of items in tTestParameters into tOldNumParameters
@@ -954,6 +955,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                
                put empty into tParams
                -- enable this test to leave func() (no parameters) intact
+               --if tEndOfOldParameters > 0 then
                if word 1 of tTestLine is not in "exit" then
                   
                   -- replace the parameters
@@ -1015,7 +1017,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                            put tTestParameters into tTokens
                            breakpoint
                            break
-                        case "send"
+                           --case "send"
                         default
                            put tTestParameters into tTokens
                      end switch
@@ -1023,6 +1025,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                   end if -- tFuncParams
                   
                end if --  word 1 of tTestLine is not in "exit"
+               --end if -- tEndOfOldParameters > 0
             end if
          else -- tOffset > tParenOffset
          end if -- word 1 of tTestLine is not in kKeywords
@@ -1252,10 +1255,6 @@ function q pText
    return quote & pText & quote
 end q
 
-command unquote @pText
-   replace quote with numtochar(3) in pText
-end unquote
-
 private command chomp @pText
    chopIf cr, pText
 end chomp
@@ -1446,7 +1445,6 @@ private command RenameVariable pVariableName
    local tRenameType
    local tNewName
    local tScript, tTestForLocal
-   local tInsertionPoint
    local tStartLineNumber, tEndLineNumber
    local tLocalScript
    local tLineCount
@@ -1474,27 +1472,44 @@ private command RenameVariable pVariableName
          end if
          set the itemdelimiter to comma
          if tRenameType is "This script" then
-            put DoReplace(tScript, pVariableName, tNewName) into tScript
+            put 1 into tStartLineNumber
+            put tScript into tLocalScript
          else
-            -- just this handler
+            local tInsertionPoint
             put ScriptContext() into tInsertionPoint
             put word 3 of tInsertionPoint into tStartLineNumber
             put word 4 of tInsertionPoint into tEndLineNumber
             put line tStartLineNumber to tEndLineNumber of tScript into tLocalScript
-            put 0 into tLineCount
-            
-            repeat for each line tLine in tLocalScript
-               -- end of handler?
-               if char 1 to 3 of tLine is "end" then
-                  exit repeat
-               end if
-               if pVariableName is in tLine and q(pVariableName) is not in tLine then
+         end if
+         -- just this handler
+         put 0 into tLineCount
+         
+         local tShouldProcessLine
+         repeat for each line tLine in tLocalScript
+            put true into tShouldProcessLine
+            -- end of handler?
+            switch word 1 of tLine
+               case pVariableName
+                  put false into tShouldProcessLine
+                  break
+               case "end"
+                  if tRenameType is "This handler only" then
+                     put false into tShouldProcessLine
+                  end if
+                  break
+            end switch
+            if tShouldProcessLine then
+               if pVariableName is in tLine then
+                  -- ignore string literals
+                  replace q(pVariableName) with numtochar(4) in tLine
                   put DoReplace(tLine, pVariableName, tNewName) into tLine
+                  replace numtochar(4) with q(pVariableName) in tLine
                   put tLine into line tLineCount+tStartLineNumber of tScript
                end if
                add 1 to tLineCount
-            end repeat
-         end if
+            end if
+         end repeat
+         
          SetScript tScript
       end if
    end if
@@ -1515,20 +1530,19 @@ private function DoReplace pScript, pOutgoingString, pIncomingString
    local tScript
    local tIsQuoted
    
-   # regex "\b" for word boundaries doesn't respect quotes as bounds
-   # so we need to strip quotes and replace them at the end
-   unquote pScript
-   unquote pIncomingString
+   replace quote with numtochar(3) in pScript
+   replace quote with numtochar(3) in pIncomingString
    put token 1 to -1 of pScript into tScript
    if quote is in pOutgoingString then
       put true into tIsQuoted
    end if
-   unquote pOutgoingString
+   replace quote with numtochar(3) in pOutgoingString
    if tIsQuoted is true then
-      put replaceText(tScript, "(?i)"& pOutgoingString, pIncomingString) into token 1 to -1 of pScript
+      put replaceText(tScript, "(?i)"& pOutgoingString, pIncomingString) into tScript
    else
-      put replaceText(tScript, "(?i)"& regexWholeWordFrom(pOutgoingString), pIncomingString) into token 1 to -1 of pScript
+      put replaceText(tScript, "(?i)"& regexWholeWordFrom(pOutgoingString), pIncomingString) into tScript
    end if
+   put tScript into token 1 to -1 of pScript
    replace numtochar(3) with quote in pScript
    return pScript
 end DoReplace
@@ -1807,49 +1821,47 @@ private function WhereUsed pVariableName, pType, pReportLocally
    local tObjectList
    local tNumControls
    local tObjectID
-   local tMainstack, tStacks --, tStackArray
+   local tMainstack, tStacks
    
    put scriptFromEditor() into tScript
    filter tScript with "private*" & pVariableName & "*"
-   --if tScript is empty then
-      
-      -- get list of objects and their scripts
-      -- get the long id of the object we're working on
-      put CurrentObject(the currentcard of stack main) into tObjectID
-      -- get the stack metadata
-      -- get the list of stacks and substacks
-      try
-         -- get the containing stack from the long id
-         put targetStackOf(tObjectID) into tMainstack
-         put tMainstack & cr into tStacks
-      catch e
-         --answer "tObjectID=" & tObjectID & cr & "tMainstack=" & tMainstack
-      end try
-      put the substacks of stack tMainstack after tStacks
-      -- fill the array with stacks and cards
-      repeat for each line tStack in tStacks
-         if the name of stack tStack is the name of tObjectID then
-            if pReportLocally is true then
-               put the script of stack tStack into tScript
-               if TestScriptForUse(pVariableName, tScript) then
-                  put the long id of stack tStack & cr after tObjectList
-               end if
+   
+   -- get list of objects and their scripts
+   -- get the long id of the object we're working on
+   put CurrentObject(the currentcard of stack main) into tObjectID
+   -- get the stack metadata
+   -- get the list of stacks and substacks
+   try
+      -- get the containing stack from the long id
+      put targetStackOf(tObjectID) into tMainstack
+      put tMainstack & cr into tStacks
+   catch e
+      --answer "tObjectID=" & tObjectID & cr & "tMainstack=" & tMainstack
+   end try
+   put the substacks of stack tMainstack after tStacks
+   -- fill the array with stacks and cards
+   repeat for each line tStack in tStacks
+      if the name of stack tStack is the name of tObjectID then
+         if pReportLocally is true then
+            put the script of stack tStack into tScript
+            if TestScriptForUse(pVariableName, tScript) then
+               put the long id of stack tStack & cr after tObjectList
             end if
          end if
-         
-         put the number of controls of stack tStack into tNumControls
-         repeat with x=1 to tNumControls
-            if the name of control x of stack tStack is the name of tObjectID \
-                  and pReportLocally is not true then
-               next repeat
-            end if
-            put the script of control x of stack tStack into tScript
-            if TestScriptForUse(pVariableName, tScript) then
-               put the long id of control x of stack tStack & cr after tObjectList
-            end if
-         end repeat --  with x=1 to tNumControls
-      end repeat --  for each line tStack in tStacks
-   --end if
+      end if
+      
+      put the number of controls of stack tStack into tNumControls
+      repeat with x=1 to tNumControls
+         if the name of control x of stack tStack is the name of tObjectID \
+               and pReportLocally is not true then
+            next repeat
+         end if
+         put the script of control x of stack tStack into tScript
+         if TestScriptForUse(pVariableName, tScript) then
+            put the long id of control x of stack tStack & cr after tObjectList
+         end if
+      end repeat --  with x=1 to tNumControls
+   end repeat --  for each line tStack in tStacks
    return tObjectList
 end WhereUsed
 
