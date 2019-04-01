@@ -905,10 +905,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
          
          local tShouldHandleThis
          local tCharPos
-         --local tIsQuoted
-         local tQuotedParams
          put false into tShouldHandleThis
-         --put false into tIsQuoted
          switch word 1 of tTestLine
             case "send"
                put wordoffset ("to", tTestLine) into tCharPos
@@ -920,7 +917,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
             case "dispatch"
                put wordoffset ("with", tTestLine) into tCharPos
                put word tCharPos+1 to -1 of tTestLine into tParams
-               put token 1 to -1 of tParams into tQuotedParams
                put tParams into tTestParameters
                put true into tShouldHandleThis
                break
@@ -956,7 +952,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                put DoReplace(tTestLine, pHandlerName, pNewHandlerName) into tTestLine
                put tTestLine into line tLineNumber of pScript
                
-               put empty into tParams
                -- enable this test to leave func() (no parameters) intact
                --if tEndOfOldParameters > 0 then
                if word 1 of tTestLine is not in "exit" then
@@ -1019,7 +1014,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                         case "dispatch"
                            put tTestParameters into tTokens
                            break
-                           --case "send"
                         default
                            put tTestParameters into tTokens
                      end switch
@@ -1416,13 +1410,29 @@ private command RenameHandler pVarName
       if it is not "Cancel" then
          set the wholematches to true
          ask "New name for" && pVarName with pVarName
-         if it is empty or it is pVarName then
+         put word 1 of it into tNewName
+         if tNewName is empty or tNewName is pVarName then
             exit RenameHandler
          end if
-         put it into tNewName
-         lock screen
-         put DoReplace(tScript, pVarName, tNewName) into tScript
-         --ChangeSignatureInScript pVarName, tNewName, tEmptyArray, tScript
+         lock screen         
+         local tInsertionPoint, tStartLineNumber, tEndLineNumber
+         local tLine, tParamsArray, tOldParams
+         put ScriptContext() into tInsertionPoint
+         put word 3 of tInsertionPoint into tStartLineNumber
+         put word 4 of tInsertionPoint into tEndLineNumber
+         put line tStartLineNumber of tScript into tLine
+         
+         replace pVarName with tNewName in line tStartLineNumber of tScript
+         replace pVarName with tNewName in line tEndLineNumber of tScript
+         
+         set the itemdelimiter to comma
+         put word 3 to -1 of tLine into tOldParams
+         put token 1 to -1 of tOldParams into tOldParams
+         repeat with x=1 to the number of items in tOldParams
+            put x into tParamsArray[x]
+         end repeat
+         ChangeSignatureInScript pVarName, tNewName, tParamsArray, tScript
+         
          SetScript tScript
          if tRenameType is kThisScript then
          else
@@ -1470,7 +1480,7 @@ private command RenameVariable pVariableName
          if it is empty or it is pVariableName then
             exit RenameVariable
          else
-            put it into tNewName
+            put word 1 of it into tNewName
          end if
          set the itemdelimiter to comma
          if tRenameType is "This script" then
