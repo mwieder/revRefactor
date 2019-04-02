@@ -100,19 +100,40 @@ After a "Go to definition" call, this gets you back to where you were.
 
 ### Known issues
 
-Renaming a variable across an entire script will rename string literals that match the variable name, i.e.,
+If you have a handler with the same name in multiple scripts in a stack
+and you change the signature of the handler for multiple scripts, the handler definitions
+in scripts other than the original won't be changed. i.e.,
 
-    local bar
-    myHandler bar
-    dispatch "myHandler" to button 1 with "bar"
+original script:
 
-if you rename bar to foo in the entire script you'll end up with
+    on myHandler pName
+    end myHandler
 
-    local foo
-    myHandler foo
-    dispatch "myHandler" to button 1 with "foo"
+    myHandler "hello"
 
-where the string literal "foo" shouldn't be renamed.
-Renaming in a single handler works properly.
+script of a different object:
+
+    on myHandler pName
+    end myHandler
+
+    myHandler "hello"
+
+adding a parameter becomes
+
+original script:
+
+    on myHandler pName, pValue
+    end myHandler
+
+    myHandler "hello", pValue
+
+script of a different object:
+
+    on myHandler pName -- * not changed
+    end myHandler
+
+    myHandler "hello", pValue
+
+I don't presently have a way around this, and haven't decided whether it's a good idea or not.
 
     
