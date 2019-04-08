@@ -48,6 +48,12 @@ Added support for getters and setters
 * partially implemented cascading dispatch command
 * 2019.03.20 mdw release 1.0.1
 * added "Go Back" to Edit menu
+* 2019.04.07 mdw version 1.0.4
+* needed to use rugged ID rather than long id when talking to the SE
+* need to use long id for the undo mechanism
+* RenameHandler now only modifies external scripts if there is no handler of the same name in them.
+* Still not ideal, but probably the best compromise for now.
+* Same for ChangeSignature.
 */
 
 -- some fake constants
@@ -73,6 +79,7 @@ command activateIDEse
    put "revNewScriptEditor 1" into main
 end activateIDEse
 
+-- getter function to retrieve the name of the current script editor
 function refactorSEName
    return main
 end refactorSEName
@@ -147,6 +154,7 @@ private command refactorMenuPick pWhich
    local tObject
    local tSelectedText
    
+   put the short name of this stack into main -- bn's patch
    set the itemDelimiter to "|"
    if item 1 of pWhich is "Refactoring" then
       try
@@ -311,10 +319,10 @@ private command ConvertLiteralToConstant pLiteral
    local tLineToInsert
    local tConstant
    local tInsertionPoint
-   local tSuccess
+   local tSuccess?
    local tObject
    
-   put false into tSuccess
+   put false into tSuccess?
    -- select the whole word
    if pLiteral is a number then
       click at the selectedLoc
@@ -345,12 +353,12 @@ private command ConvertLiteralToConstant pLiteral
       if tInsertionPoint is not 0 then
          put tLineToInsert before line tInsertionPoint of tScript
          SetScript tScript, tObject
-         put true into tSuccess
+         put true into tSuccess?
       else
          Undo.Pop tObject, "Undo.RestoreScript"
       end if
    end if
-   return tSuccess
+   return tSuccess?
 end ConvertLiteralToConstant
 
 /**
@@ -454,9 +462,6 @@ private command RemoveDeclaration pVariableName, pType, pLine, pOffset, @pScript
       else
          put line tLinePos of pScript into tLine
          put replacetext(tLine, "(?i)[, ]*"& regexWholeWordFrom(pVariableName), "") into tReplacedLine
-         --         if char -1 of tReplacedLine is "," then
-         --            delete char -1 of tReplacedLine
-         --         end if
          chopIf comma, tReplacedLine
          replace "global," with "global " in tReplacedLine
          replace "local," with "local " in tReplacedLine
@@ -537,7 +542,7 @@ end regexWholeWordFrom
                end if
                put space & pVariableName after line tStartLineNumber of tScript
             end if
-            if variableIsInHandler(pVariableName, tLocalScript) is false then
+            if variableIsInHandler?(pVariableName, tLocalScript) is false then
                -- must be script-local, so grab the whole script
                put tScript into tLocalScript
                put 0 into tStartLineNumber
@@ -569,7 +574,7 @@ end regexWholeWordFrom
                put line tStartLineNumber+1 to tEndLineNumber of tScript into tLocalScript
                -- see if we're dealing with a script-local or handler-local variable
                -- see if it's in the current handler
-               if variableIsInHandler(pVariableName, tLocalScript) is false then
+               if variableIsInHandler?(pVariableName, tLocalScript) is false then
                   -- must be script-local, so grab the whole script
                   put tScript into tLocalScript
                   put 0 into tStartLineNumber
@@ -590,7 +595,6 @@ end regexWholeWordFrom
                      case "local"
                         if pVariableName is in tLine then
                            RemoveDeclaration pVariableName, word 1 of tLine, tLine, 0, tLocalScript
-                           --put tLocalScript into line tStartLineNumber+1 to tEndLineNumber of tScript
                            insertText tLocalScript, tStartLineNumber, tEndLineNUmber, tScript
                            -- see if we deleted a line; adjust the line count if so
                            if the number of lines in tScript < tLines then
@@ -636,17 +640,17 @@ private command insertGetterAndSetter pVar, @pScript
    insertAtStartOfScript merge(kGetter), pScript
 end insertGetterAndSetter
 
-private function variableIsInHandler pVariableName, pScript
+private function variableIsInHandler? pVariableName, pScript
    -- see if it's in the current handler
    filter pScript with "*local *" & pVariableName & "*"
    return pScript is not empty
-end variableIsInHandler
+end variableIsInHandler?
 
-private function globalIsInHandler pVariableName, pScript
+private function globalIsInHandler? pVariableName, pScript
    -- see if it's in the current handler
    filter pScript with "*global *" & pVariableName & "*"
    return pScript is not empty
-end globalIsInHandler
+end globalIsInHandler?
 
 /**
 * ConvertLocalVariableToScriptLocal
@@ -666,8 +670,8 @@ private command ConvertLocalVariableToScriptLocal pVariableName, @pScript
    put word 4 of tInsertionPoint into tEndLineNumber
    put line tStartLineNumber+1 to tEndLineNumber of pScript into tLocalScript
    
-   if variableIsInHandler(pVariableName, tLocalScript) is false \
-         and globalIsInHandler(pVariableName, tLocalScript) is false then
+   if variableIsInHandler?(pVariableName, tLocalScript) is false \
+         and globalIsInHandler?(pVariableName, tLocalScript) is false then
       -- must be script-local, so grab the whole script
       put pScript into tLocalScript
       put 0 into tStartLineNumber
@@ -691,6 +695,7 @@ end ConvertLocalVariableToScriptLocal
 
 private command ConvertVariableToProperty pVariableName, pObject, @pScriptLine
    constant kSet = "set the [[pVariableName]] of [[pObject]] to"
+   
    if "put" is word 1 of pScriptLine and pVariablename is word -1 of pScriptLine then
       put merge(kSet) into word 1 of pScriptLine
       delete word -2 to -1 of pScriptLine
@@ -743,7 +748,7 @@ private command ChangeSignature pContextText
    
    -- put the parameter locations in an array
    -- whose keys are the parameters
-   put GetOldParams(tLine) into tParamsArray
+   put OriginalParams(tLine) into tParamsArray
    
    ask "Edit Signature" with line tStartLineNumber of tScript
    if it is not empty and it is not line tStartLineNumber of tScript then
@@ -766,8 +771,11 @@ private command ChangeSignature pContextText
             else
                put word 2 of tNewSignature into tNewHandlerName
             end if
-            ChangeSignatureInScript tHandlerName, tNewHandlerName, sNewParamsArray, tScript
-            SetScript tScript, tObject
+            if ShouldSkipScript?(tScript) then
+            else
+               ChangeSignatureInScript tHandlerName, tNewHandlerName, sNewParamsArray, tScript
+               SetScript tScript, tObject
+            end if
          end repeat
       end if
    else
@@ -775,7 +783,7 @@ private command ChangeSignature pContextText
    end if
 end ChangeSignature
 
-private function GetOldParams pLine
+private function OriginalParams pLine
    local tOldParams
    local tParamsArray
    local x
@@ -789,7 +797,7 @@ private function GetOldParams pLine
       put x into tParamsArray[word 1 of item x of tOldParams]
    end repeat
    return tParamsArray
-end GetOldParams
+end OriginalParams
 
 /**
 * ChangeSignatureInEditorScript
@@ -1247,7 +1255,7 @@ private function GenerateTestFor pType, pHandler, pParameters
    return tTestScript
 end GenerateTestFor
 
-function q pText
+private function q pText
    return quote & pText & quote
 end q
 
@@ -1432,22 +1440,49 @@ private command RenameHandler pVarName
             put x into tParamsArray[x]
          end repeat
          ChangeSignatureInScript pVarName, tNewName, tParamsArray, tScript
-         
          SetScript tScript
+         
          if tRenameType is kThisScript then
+            -- just this script, so we're done
          else
             -- globally
             put WhereUsed(pVarName, tType) into tList
             repeat for each line tObject in tList
                put the script of tObject into tScript
-               ChangeSignatureInScript pVarName, tNewName, tEmptyArray, tScript
-               SetScript tScript, tObject
+               -- first see if there is a handler of the same name in the script
+               -- if not, then go ahead and change the signature
+               -- if so, then we probably don't want to change it.
+               --
+               -- unless we do, in which case we also need the change the handler declaration
+               if ShouldSkipScript?(tScript) then
+               else
+                  ChangeSignatureInScript pVarName, tNewName, tEmptyArray, tScript
+                  SetScript tScript, tObject
+               end if
             end repeat
          end if
          unlock screen
       end if
    end if
 end RenameHandler
+
+private function ShouldSkipScript? pHandlerName, pScript
+   local tTestScript
+   local tShouldSkip?
+   
+   put false into tShouldSkip?
+   put pScript into tTestScript
+   filter tTestScript with "*" && pHandlerName & "*"
+   if tTestScript is not empty then
+      repeat for each line tLine in tTestScript
+         if word 2 of tLine is pHandlerName then
+            put true into tShouldSkip?
+            exit repeat
+         end if
+      end repeat
+   end if
+   return tShouldSkip?
+end ShouldSkipScript?
 
 /**
 * RenameVariable
@@ -1496,21 +1531,21 @@ private command RenameVariable pVariableName
          -- just this handler
          put 0 into tLineCount
          
-         local tShouldProcessLine
+         local tShouldProcessLine?
          repeat for each line tLine in tLocalScript
-            put true into tShouldProcessLine
+            put true into tShouldProcessLine?
             -- end of handler?
             switch word 1 of tLine
                case pVariableName
-                  put false into tShouldProcessLine
+                  put false into tShouldProcessLine?
                   break
                case "end"
                   if tRenameType is "This handler only" then
-                     put false into tShouldProcessLine
+                     put false into tShouldProcessLine?
                   end if
                   break
             end switch
-            if tShouldProcessLine then
+            if tShouldProcessLine? then
                if pVariableName is in tLine then
                   -- ignore string literals
                   replace q(pVariableName) with numtochar(4) in tLine
@@ -1670,10 +1705,10 @@ end HandlerType
 */
 private function InsertionPoint pScript
    local tInsertionPoint
-   local tInComment
+   local tInComment?
    
    put 0 into tInsertionPoint
-   put false into tInComment
+   put false into tInComment?
    set the itemDelimiter to comma
    if word 1 to -1 of pScript is not empty then
       repeat for each line tLine in pScript
@@ -1684,13 +1719,13 @@ private function InsertionPoint pScript
          end if
          if tLine begins with "/*" then
             -- try to ignore block comments
-            put true into tInComment
+            put true into tInComment?
             next repeat
          end if
          if "*/" is in tLine then
-            put false into tInComment
+            put false into tInComment?
          else
-            if tInComment is false then
+            if tInComment? is false then
                exit repeat
             end if
          end if
@@ -1941,10 +1976,10 @@ end scriptObjectsOfObject
 */
 private function TestScriptForUse pHandlerName, pScript
    local tTestScript
-   local tReturn
+   local tIsUsed?
    local tWordOffset
    
-   put false into tReturn
+   put false into tIsUsed?
    set the wholeMatches to true
    if pScript is not empty then
       filter pScript without "end*"
@@ -1956,12 +1991,12 @@ private function TestScriptForUse pHandlerName, pScript
          put wordoffset(pHandlerName, pScript) into tWordOffset
          if tWordOffset is not 0 then
             if char 1 of word tWordOffset of pScript is not quote then
-               put true into tReturn
+               put true into tIsUsed?
             end if
          end if
       end if -- massaged pScript is not empty
    end if -- pScript is not empty
-   return tReturn
+   return tIsUsed?
 end TestScriptForUse
 
 /**
@@ -1980,8 +2015,8 @@ private command SetScript pScript, pObject
       put CurrentObject() into pObject
    end if
    -- set undo restore point
-   Undo.Push pObject
    edit the script of pObject
+   Undo.Push pObject
    try
       put the selectedChunk into tSelectionPoint
       StoreScrollsOfCard
@@ -2001,12 +2036,13 @@ private command SetScript pScript, pObject
 end SetScript
 
 private command setSEDirtyFlagFor pObject
-   if pObject is empty then
-      put CurrentObject() into pObject
-   end if
+   put CurrentObject() into pObject
    dispatch "setDirty" to group "Editor" of stack main with pObject, true
    -- call this to fake out the dirty flag... otherwise it's not persistent
    -- this tells the textReplace handler to move nothing starting at char 1
+   --
+   -- NOTE: textReplace needs the object reference to be in rugged ID form, NOT long id
+   --
    dispatch "textReplace" to group "Editor" of stack main with 1, "", "", pObject
 end setSEDirtyFlagFor
 
@@ -2416,6 +2452,7 @@ private command Undo.Push pObject
    local tCount
    
    put CurrentObject(pObject) into pObject
+   put the long id of pObject into pObject
    put Undo.Pointer(pObject, false)+1 into tCount
    Undo.Store pObject, tCount, compress(scriptFromEditor())
    Undo.SetPointer pObject, tCount -- bump the index pointer
@@ -2436,8 +2473,8 @@ private command Undo.Pop pObject, pFunc
    lock screen
    -- retrieve the current pointer
    put CurrentObject(pObject) into pObject
+   put the long id of pObject into pObject
    put Undo.Pointer(pObject, true) into tCount
-   
    if tCount > 0 then
       -- see if we're at the top of the stack
       put Undo.Retrieve(pObject, tCount+1) into tSavedUndo
@@ -2482,9 +2519,9 @@ end Undo.Pop
 private command DoRedo pObject, pFunc
    local tCount
    local tSavedUndo
-   local tSuccess
+   local tSuccess?
    
-   put false into tSuccess
+   put false into tSuccess?
    lock screen
    -- increment the stack pointer
    put CurrentObject(pObject) into pObject
@@ -2499,10 +2536,10 @@ private command DoRedo pObject, pFunc
       dispatch pFunc to the target with pObject, tCount, tSavedUndo
       -- store the new stack pointer
       Undo.SetPointer pObject, tCount-1
-      put true into tSuccess
+      put true into tSuccess?
    end if
    unlock screen
-   if tSuccess then
+   if tSuccess? then
    else
       answer "nothing to redo @" && tCount
    end if
@@ -2531,8 +2568,8 @@ private function CurrentObject pCard
    else
       dispatch "getCurrentTab" to group "Script Tabs" of stack main
    end if
+   -- NOTE: getCurrentTab returns the object reference as a rugged ID
    put the result into tObject
-   return tObject
 end CurrentObject
 
 private function glx2IsInUse
