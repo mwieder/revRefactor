@@ -100,39 +100,47 @@ After a "Go to definition" call, this gets you back to where you were.
 
 ### Known issues
 
-If you have a handler with the same name in multiple scripts in a stack
-and you change the signature of the handler for multiple scripts, the handler definitions
-in scripts other than the original won't be changed. i.e.,
+If you are renaming or changing the signature of a handler in a script and want to effect this operation across all scripts in the same stack, calls to that handler will be renamed/modified *unless* there is a handler of the same name in that script, in which case the script will not be changed.
 
 original script:
 
-    on myHandler pName
+    on myHandler pParameter -- declaration
     end myHandler
 
-    myHandler "hello"
+        myHandler someVariable -- call to myHandler
 
-script of a different object:
+------------------------------------------------
 
-    on myHandler pName
+script 2:
+
+-- the name/parameters change will modify this script
+
+        myHandler someVariable -- call to myHandler in original script
+
+------------------------------------------------
+
+script 3:
+
+-- this script will be unmodified
+
+    on myHandler pParameter -- declaration
     end myHandler
 
-    myHandler "hello"
+        myHandler someVariable -- call to local myHandler
 
-adding a parameter becomes
+------------------------------------------------
 
-original script:
+script 4:
 
-    on myHandler pName, pValue
+-- this script will be unmodified and may not be solvable with static analysis
+
+    on myHandler pParameter -- declaration
+        -- do things
+        dispatch "myHandler" -- this is still an unsolved problem
+        pass myHandler -- this is also still an unsolved problem
     end myHandler
 
-    myHandler "hello", pValue
-
-script of a different object:
-
-    on myHandler pName -- * not changed
-    end myHandler
-
-    myHandler "hello", pValue
+        myHandler someVariable -- call to local myHandler
 
 I don't presently have a way around this, and haven't decided whether it's a good idea or not.
 
