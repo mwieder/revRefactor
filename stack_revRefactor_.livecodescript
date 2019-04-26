@@ -33,27 +33,31 @@ Script "stack_revRefactor_"
 
 /**
 2012.05.29 mdw
-Added extra dimension to sUndoPointArray to support multiple tabs
-Localized any direct access to sUndoPointArray to UndoRetrive and Undo.Store
+* Added extra dimension to sUndoPointArray to support multiple tabs
+* Localized any direct access to sUndoPointArray to UndoRetrive and Undo.Store
 2012.05.31.mdw
-Moved low-level Undo code to mainstack
-Added extra type parameter "refactor" for multiple undo types
+* Moved low-level Undo code to mainstack
+* Added extra type parameter "refactor" for multiple undo types
 2012.08.02 mdw
-Fixed DoReplace if keyword is end of line, as in "exit grunt"
+* Fixed DoReplace if keyword is end of line, as in "exit grunt"
 2019.01.04 mdw
-Extracted from glx2 for use in IDE's script editor
+* Extracted from glx2 for use in IDE's script editor
 2019.01.27 mdw
-Added support for getters and setters
-* 2019.03.08 mdw fixed getter/setter private declaration
+* Added support for getters and setters
+2019.03.08 mdw fixed getter/setter private declaration
 * partially implemented cascading dispatch command
-* 2019.03.20 mdw release 1.0.1
+2019.03.20 mdw release 1.0.1
 * added "Go Back" to Edit menu
-* 2019.04.07 mdw version 1.0.4
+2019.04.07 mdw version 1.0.4
 * needed to use rugged ID rather than long id when talking to the SE
 * need to use long id for the undo mechanism
 * RenameHandler now only modifies external scripts if there is no handler of the same name in them.
 * Still not ideal, but probably the best compromise for now.
 * Same for ChangeSignature.
+2019.04.25 mdw version 1.0.5
+* AddDocsAtLine now allows for clicking anywhere in a handler to create documentation for that handler
+* RenameVariable had misplaced lineCount incrementer : fixed per Bernd
+*
 */
 
 -- some fake constants
@@ -153,19 +157,26 @@ end generateRefactoringSubmenu
 private command refactorMenuPick pWhich
    local tObject
    local tSelectedText
+   local tSelectedChunk
    
    put the short name of this stack into main -- bn's patch
    set the itemDelimiter to "|"
    if item 1 of pWhich is "Refactoring" then
+      lock screen
       try
+         put the selectedChunk into tSelectedChunk
          if the selectedtext is empty then
             click at the selectedLoc
             put the clickText into tSelectedText
+            if tSelectedChunk is not empty then
+               select tSelectedChunk
+            end if
          else
             put the selectedtext into tSelectedText
          end if
       catch e
       end try
+      unlock screen
       
       try
          switch item 2 of pWhich
@@ -238,7 +249,7 @@ private command refactorMenuPick pWhich
          case "Go Back"
             local tIndex
             local tDestination
-           put word 2 of the selectedline into tIndex
+            put word 2 of the selectedline into tIndex
             put the long id of CurrentObject() into tObject
             if sBreadCrumbs[tIndex,tObject] is empty then
                put item 1 of sBreadCrumbs["lastBreadCrumb"] into tLine
@@ -1104,9 +1115,12 @@ private command AddTestAtLine pSelectedLine
       return -1
    end if
    lock screen
-   put scriptFromEditor() into tScript
-   put word 2 of pSelectedLine into tLineNumber
+   
+   local tHandlerList
+   put scriptContext() into tHandlerList
+   put word 3 of tHandlerList into tLineNumber
    put line tLineNumber of tScript into tFunctionLine
+   
    if word 1 of tFunctionLine is in kLineStarters then
       if word 1 of tFunctionLine is "private" then
          delete word 1 of tFunctionLine
@@ -1162,11 +1176,11 @@ private command AddTestAtLine pSelectedLine
             put char 2 to -2 of word 1 of line tOffset of tFileContents into tObjectNumber
             delete line 1 to 6 of tGeneratedTest
             replace "object$NUMBER" with tObjectNumber in tGeneratedTest
-         end if
+         end if # do we need to add a new object reference?
       else
          # starting a new test file
          put CreateNewTestsFile(tFileName, tGeneratedTest) into tGeneratedTest
-      end if
+      end if # there is a file tFileName
       
       open file tFileName for append
       if the result is not empty then
@@ -1180,7 +1194,7 @@ private command AddTestAtLine pSelectedLine
          end if
          close file tFileName
       end if
-   end if
+   end if # word 1 of tFunctionLine is in kLineStarters
    unlock screen
    return 0
 end AddTestAtLine
@@ -1286,34 +1300,33 @@ private command AddDocsAtLine pSelectedLine
    
    lock screen
    put scriptFromEditor() into tScript
-   put word 2 of pSelectedLine into tLineNumber
+   put scriptContext() into tHandlerList
+   put word 3 of tHandlerList into tLineNumber
    put line tLineNumber of tScript into tFunctionLine
-   if word 1 of tFunctionLine is in kLineStarters then
-      put scriptContext() into tHandlerList
-      switch word 1 of tHandlerList
-         case "PF"
-            delete word 1 of tFunctionLine
-         case "G"
-         case "F"
-            put "function" into tFunctionType
-            break
-         case "PM"
-            delete word 1 of tFunctionLine
-         case "S"
-         case "M"
-            put "command" into tFunctionType
-            break
-      end switch
-      put word 2 of tHandlerList into tHandlerName
-      if tFunctionLine is not empty then
-         put token 3 to -1 of tFunctionLine into tParameters
-      end if
-      
-      put word 3 of tHandlerList into tLineNumber
-      put GenerateDocsFor(tLineNumber, tFunctionType, tHandlerName, tParameters) into tGeneratedTest
-      put tGeneratedTest before line tLineNumber of tScript
-      SetScript tScript
+   
+   switch word 1 of tHandlerList
+      case "PF"
+         delete word 1 of tFunctionLine
+      case "G"
+      case "F"
+         put "function" into tFunctionType
+         break
+      case "PM"
+         delete word 1 of tFunctionLine
+      case "S"
+      case "M"
+         put "command" into tFunctionType
+         break
+   end switch
+   put word 2 of tHandlerList into tHandlerName
+   if tFunctionLine is not empty then
+      put token 3 to -1 of tFunctionLine into tParameters
    end if
+   
+   put word 3 of tHandlerList into tLineNumber
+   put GenerateDocsFor(tLineNumber, tFunctionType, tHandlerName, tParameters) into tGeneratedTest
+   put tGeneratedTest before line tLineNumber of tScript
+   SetScript tScript
    unlock screen
 end AddDocsAtLine
 
@@ -1519,16 +1532,17 @@ private command RenameVariable pVariableName
          end if
          set the itemdelimiter to comma
          if tRenameType is "This script" then
+            -- entire script
             put 1 into tStartLineNumber
             put tScript into tLocalScript
          else
+            -- just this handler
             local tInsertionPoint
             put ScriptContext() into tInsertionPoint
             put word 3 of tInsertionPoint into tStartLineNumber
             put word 4 of tInsertionPoint into tEndLineNumber
             put line tStartLineNumber to tEndLineNumber of tScript into tLocalScript
          end if
-         -- just this handler
          put 0 into tLineCount
          
          local tShouldProcessLine?
@@ -1553,8 +1567,8 @@ private command RenameVariable pVariableName
                   replace numtochar(4) with q(pVariableName) in tLine
                   put tLine into line tLineCount+tStartLineNumber of tScript
                end if
-               add 1 to tLineCount
             end if
+            add 1 to tLineCount -- moved per bn
          end repeat
          
          SetScript tScript
