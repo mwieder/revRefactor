@@ -2096,8 +2096,10 @@ private command FindOrphans pObject
    repeat for each line tLine in tScript
       switch token 1 of tLine
          case "put"
-            if token -1 of tLine is not among the items of "msg,message" then
-               break
+            if "into" is in tLine then
+               if token -1 of tLine is not among the items of "msg,message" then
+                  break
+               end if
             end if
             -- just fall through here
          case "breakpoint"
