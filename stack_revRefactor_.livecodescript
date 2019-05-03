@@ -60,6 +60,10 @@ Script "stack_revRefactor_"
 2019.05.02 mdw version 1.0.6
 * modified FindOrphans to catch orphan "put <xyz>" statements
 * listUndeclaredVariablesIn had a misplaced chopIf statement -- bn
+2019.05.03 mdw version 1.0.7
+* move or copy without substacks was throwing an error
+* explictVars is *not* set with strict compilation mode
+* added tooltips to orphan code display since it isn't resizable
 *
 */
 
@@ -1951,6 +1955,7 @@ private function scriptObjectsOfObject pObjectID
             put the substacks of stack tMainstack & cr after tMainstackList
          end if
       end repeat
+      filter tMainstackList without empty -- bn
       
       repeat for each line tStack in tMainstackList
          -- list the stack itself
@@ -2146,9 +2151,12 @@ private function listUndeclaredVariablesIn pScript
    local tCurrentHandler
    local tHandlerList
    local tVariables
+   --constant kExplicitVars = "cScriptEditor,explicitVariables"
    
    set the visible of button "btnUndeclared" of card "Orphans" of me to false
-   if the explicitVars is true then
+   dispatch "revSEGetPreference" to stack "revseutilities"  with "explicitVariables"
+   if the result is true then
+      --if the kExplicitVars of stack "revPreferences" is true then
    else
       -- put the undeclared variables into tUndeclared
       put 1 into tLineNumber
