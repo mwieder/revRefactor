@@ -12,3 +12,7 @@ on mouseUp
    put word 1 of the selectedtext into tLineNumber
    dispatch "goLine" to group "Editor" of stack refactorSEName() with tLineNumber, true
 end mouseUp
+
+on mouseMove
+   set the tooltip of me to the mousetext
+end mouseMove

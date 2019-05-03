@@ -57,6 +57,9 @@ Script "stack_revRefactor_"
 2019.04.25 mdw version 1.0.5
 * AddDocsAtLine now allows for clicking anywhere in a handler to create documentation for that handler
 * RenameVariable had misplaced lineCount incrementer : fixed per Bernd
+2019.05.02 mdw version 1.0.6
+* modified FindOrphans to catch orphan "put <xyz>" statements
+* listUndeclaredVariablesIn had a misplaced chopIf statement -- bn
 *
 */
 
@@ -2074,6 +2077,7 @@ private command FindOrphans pObject
    local tScript, tFilteredScript
    local tOrphanList, tUndeclaredList
    local tLineNumber
+   local tPutLine
    
    if pObject is empty then
       put CurrentObject() into pObject
@@ -2091,15 +2095,19 @@ private command FindOrphans pObject
    local tUndeclared
    put listUndeclaredVariablesIn(tScript) into tUndeclared
    
-   -- find leftover "put into msg"
+   -- find leftover "put <xyz>" and "put <xyz> into msg"
    put 1 into tLineNumber
    repeat for each line tLine in tScript
       switch token 1 of tLine
          case "put"
-            if "into" is in tLine then
+            filter tLine with "* [abi][fen][tf][eo][r ]*" into tPutLine
+            if tPutLine is not empty then
                if token -1 of tLine is not among the items of "msg,message" then
                   break
                end if
+            end if
+            if char -1 of tLine is "\" then
+               break
             end if
             -- just fall through here
          case "breakpoint"
@@ -2118,7 +2126,7 @@ private command FindOrphans pObject
    end if
    
    if tOrphanList is not empty or tUndeclaredList is not empty then
-      sort tOrphanList
+      sort numeric tOrphanList
       put tOrphanList into field "fldOrphanList" of card "Orphans" of me
       palette me
       set the visible of me to true
@@ -2181,10 +2189,9 @@ private function listUndeclaredVariablesIn pScript
                put token 2 of tTest into tCurrentHandler
                repeat for each item tParam in token 3 to -1 of tTest
                   put word 1 of tParam into tParam
-                  --                  if char 1 of tParam is "@" then
-                  --                     delete char 1 of tParam
-                  --                  end if
-                  chopIf "@", tParam
+                  if char 1 of tParam is "@" then
+                     delete char 1 of tParam
+                  end if
                   put tCurrentHandler && tParam & cr after tLocals
                end repeat
                break
@@ -2275,11 +2282,18 @@ private function globalOrphansOf pObject
    local tHandlerList
    local tHandler, tType
    local tOrphanList
+   local tAllMessagesA
+   
+   put getIDEMessages("message") into tAllMessagesA
    
    -- revAvailableHandlers is wrong if unapplied edits - have to roll our own
    put availableHandlersOf(pObject) into tHandlerList
    
    repeat for each line tHandlerDetails in tHandlerList
+      if tAllMessagesA[word 2 of tHandlerDetails] or word 2 of tHandlerDetails begins with "rev" then
+         next repeat
+      end if
+      
       put "function" into tType
       switch char 1 of tHandlerDetails
          case "P"
@@ -2297,6 +2311,17 @@ private function globalOrphansOf pObject
    end repeat
    return tOrphanList
 end globalOrphansOf
+
+private function getIDEMessages pElementType
+   local tMessagesA, tAllMessagesA
+   
+   put ideDocsFetchLCSElementsOfType(pElementType) into tMessagesA
+   repeat for each key aKey in tMessagesA
+      put tMessagesA[aKey]["display Name"] & cr after tAllMessagesA
+   end repeat
+   split tAllMessagesA by return as set
+   return tAllMessagesA
+end getIDEMessages
 
 /**
 * filteredScript
