@@ -1639,13 +1639,14 @@ private command CopyOrMove pMode
    local tDestination
    local tObjectID, tControlsList, tControlNamesList
    
+   put CurrentObject() into tObjectID
+   put ScriptContext() into tInsertionPoint
+   -- get just the handler name
+   put word 2 of tInsertionPoint into tHandler
+   put pMode && tHandler && "to where?" into field "fldObjects" of stack "Object Selector" of me
    -- get the list of scripts being edited
    -- convert that into a list of mainstacks
    -- list the substacks, cards, and objects
-   put CurrentObject() into tObjectID
-   put ScriptContext() into tInsertionPoint
-   put word 2 of tInsertionPoint into tHandler
-   put pMode && tHandler && "to where?" into field "fldObjects" of stack "Object Selector" of me
    put scriptObjectsOfObject(tObjectID) into tControlsList
    put tControlsList into button "btnObjects" of stack "Object Selector" of me
    put empty into tDestination
@@ -1655,15 +1656,23 @@ private command CopyOrMove pMode
       put scriptFromEditor() into tScript
       put word 3 of tInsertionPoint into tStartLineNumber
       put word 4 of tInsertionPoint into tEndLineNumber
-      put line tStartLineNumber to tEndLineNumber of tScript into tHandler
+      -- now we're ready to copy the handler
       try
          edit the script of tDestination
-         put scriptFromEditor() & cr & tHandler & cr into tDestinationScript
-         SetScript tDestinationScript
-         if pMode is "Move" then
-            edit the script of tObjectID
-            delete line tStartLineNumber to tEndLineNumber of tScript
-            SetScript tScript
+         -- ensure there's no handler of the same name in the destination script
+         local tHandlers
+         put availableHandlersOf(tDestination) into tHandlers
+         if space & tHandler & space is not in tHandlers then
+            -- add the copied handler to the destination script
+            put line tStartLineNumber to tEndLineNumber of tScript into tHandler
+            put scriptFromEditor() & cr & tHandler & cr into tDestinationScript
+            SetScript tDestinationScript
+            -- see if we should delete the original script lines
+            if pMode is "Move" then
+               edit the script of tObjectID
+               delete line tStartLineNumber to tEndLineNumber of tScript
+               SetScript tScript
+            end if
          end if
       catch e
          answer e
@@ -1794,6 +1803,35 @@ private function ScriptContext
    return tHandler
 end ScriptContext
 
+private function stripCommentsFrom pScript
+   local tIsInBlockComment
+   local tScript
+   
+   put false into tIsInBlockComment
+   repeat for each line tLine in pScript
+      if "*/" is in tLine then
+         put false into tIsInBlockComment
+         next repeat
+      end if
+      if tIsInBlockComment then
+         next repeat
+      end if
+      switch char 1 to 2 of word 1 of tLine
+         case "//"
+         case "--"
+         case "# "
+            next repeat
+            break
+         case "/*"
+            put true into tIsInBlockComment
+            next repeat
+            break
+      end switch
+      put tLine & cr after tScript
+   end repeat
+   return tScript
+end stripCommentsFrom
+
 private function availableHandlersOf pObject
    local tHandlerList
    local tEditors, tTargetObjects
@@ -1815,6 +1853,9 @@ private function availableHandlersOf pObject
          if pObject is among the lines of tTargetObjects then
             put scriptFromEditor(pObject) into tScript
             put tScript into tHandlers
+            -- strip comments from tHandlers ?
+            put stripCommentsFrom(tHandlers) into tHandlers
+            
             filter tHandlers with "end*"
             replace "command " with "on " in tScript
             replace "before " with "on " in tScript
