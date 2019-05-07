@@ -1652,28 +1652,55 @@ private command CopyOrMove pMode
    put empty into tDestination
    modal stack "Object Selector" of me
    put the dialogdata into tDestination
-   if tDestination is not empty then
+   if tDestination is not empty and tDestination is not "yes" then
       put scriptFromEditor() into tScript
       put word 3 of tInsertionPoint into tStartLineNumber
       put word 4 of tInsertionPoint into tEndLineNumber
+      put line tStartLineNumber to tEndLineNumber of tScript into tHandler
+      
+      -- ensure there's no handler of the same name in the destination script
+      local tHandlerName, tTestName
+      put line 1 of tHandler into tHandlerName
+      if word 1 of tHandlerName is "private" then
+         put word 2 to 3 of tHandlerName into tTestName
+      else
+         put word 1 to 2 of tHandlerName into tTestName
+      end if
+      
+      ## make sure on/command as synonyms are caught
+      if word 1 of tTestName is "on" or word 1 of tTestName is "command" then
+         if word 1 of tTestName is "on" then
+            put cr & "command" && word 2 of line 1 of tTestName after tTestName
+         else
+            put cr & "on" && word 2 of line 1 of tTestName after tTestName
+         end if
+      end if
+      
+      local tDestScript
+      put the script of tDestination into tDestScript
+      
+      ## test for space or return after handlername to exclude partial matches
+      ## there is already a space before the handler name
+      repeat for each line aHandler in tTestName
+         if offset(aHandler & space, tDestScript) is not 0 \
+               or offset(aHandler & cr, tDestScript) is not 0 then
+            answer "a handler of that name already exists at" && tDestination & cr
+            exit CopyOrMove
+         end if
+      end repeat
+      
       -- now we're ready to copy the handler
       try
          edit the script of tDestination
-         -- ensure there's no handler of the same name in the destination script
-         local tHandlers
-         put availableHandlersOf(tDestination) into tHandlers
-         if space & tHandler & space is not in tHandlers then
-            -- add the copied handler to the destination script
-            put line tStartLineNumber to tEndLineNumber of tScript into tHandler
-            put scriptFromEditor() & cr & tHandler & cr into tDestinationScript
-            SetScript tDestinationScript
-            -- see if we should delete the original script lines
-            if pMode is "Move" then
-               edit the script of tObjectID
-               delete line tStartLineNumber to tEndLineNumber of tScript
-               SetScript tScript
-            end if
+         put scriptFromEditor() & cr & tHandler & cr into tDestinationScript
+         SetScript tDestinationScript
+         -- see if we should delete the original script lines
+         if pMode is "Move" then
+            edit the script of tObjectID
+            delete line tStartLineNumber to tEndLineNumber of tScript
+            SetScript tScript
          end if
+         --end if
       catch e
          answer e
       end try
@@ -1853,7 +1880,7 @@ private function availableHandlersOf pObject
          if pObject is among the lines of tTargetObjects then
             put scriptFromEditor(pObject) into tScript
             put tScript into tHandlers
-            -- strip comments from tHandlers ?
+            -- strip comments from tHandlers
             put stripCommentsFrom(tHandlers) into tHandlers
             
             filter tHandlers with "end*"
@@ -1976,11 +2003,12 @@ end WhereUsed
 
 private function scriptObjectsOfObject pObjectID
    local tMainstack
-   local tObjectList, tTargetObjects
+   local tTargetObjects
    local tCards
    local tNumControls
    local tControlNamesList, tMainstackList
    local tEditors
+   local tObjectArray
    
    -- get a list of all the open script editors
    put revListScriptEditors() into tEditors
@@ -1998,33 +2026,36 @@ private function scriptObjectsOfObject pObjectID
       end repeat
       filter tMainstackList without empty -- bn
       
+      local tStackID, tCardID, tControlID
+      put empty into tObjectArray
       repeat for each line tStack in tMainstackList
          -- list the stack itself
-         put "stack" && tStack & cr after tObjectList
+         put the long id of stack tStack into tStackID
+         put tStack into tObjectArray[tStackID]
          put the cardids of stack tStack into tCards
          repeat for each line tCard in tCards
+            put the long id of card id tCard of tStackID into tCardID
+            put tCardID into tObjectArray[tStackID][tCard][ID]
             -- list each card in the stack
-            put the long id of card id tCard of stack tStack & cr after tObjectList
-            put the number of controls of card id tCard of stack tStack into tNumControls
+            put the number of controls of tCardID into tNumControls
             repeat with x=1 to tNumControls
                -- list the long id of each control on the card
-               put the long id of control x of card id tCard of stack tStack & cr after tObjectList
+               put the long id of control x of tCardID into tObjectArray[tStackID][tCard][x]
             end repeat
          end repeat
       end repeat
    end repeat
    
-   repeat for each line tLine in tObjectList
-      switch word 1 of tLine
-         case "stack"
-            put tLine & cr after tControlNamesList
-            break
-         case "card"
-            put tab & the name of tLine & cr after tControlNamesList
-            break
-         default
-            put tab & tab & the name of tLine & cr after tControlNamesList
-      end switch
+   -- unwind the array into something an option menu can use
+   repeat for each key tStack in tObjectArray
+      put the name of tStack & cr after tControlNamesList -- the stack name
+      put tab & the name of tStack & cr after tControlNamesList -- the stack name
+      repeat for each element tCard in tObjectArray[tStack]
+         put tab & the name of tCard[ID] & cr after tControlNamesList
+         repeat for each element tControl in tCard
+            put tab & tab & the name of tControl & cr after tControlNamesList
+         end repeat
+      end repeat
    end repeat
    return tControlNamesList
 end scriptObjectsOfObject
