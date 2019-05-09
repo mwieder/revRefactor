@@ -64,7 +64,12 @@ Script "stack_revRefactor_"
 * move or copy without substacks was throwing an error
 * explictVars is *not* set with strict compilation mode
 * added tooltips to orphan code display since it isn't resizable
-*
+2019.05.07 mdw
+* fixed the object selector for CopyOrMove in scriptObjectsOfObject
+* added bn's patches to ensure no duplicate copies
+2019.05.08 mdw
+* listOrphansOfType needed tweaking after refactoring (irony rears its ugly head)
+* don't remember why filteredScript was trying to filter out regex "\**"
 */
 
 -- some fake constants
@@ -2332,12 +2337,14 @@ private function listOrphansOfType pType, pScript
    filter tTheRest without "*" & pType && "*"
    removeCommentsFrom tTheRest
    -- see if there's anything to work with
+   local tOffsetLine
    if tFilteredScript is not empty then
       repeat for each line tLine in tFilteredScript
-         delete word 1 of tLine
+         put tLine into tOffsetLine
+         delete word 1 of tLine -- should be pType
          repeat for each item tVariable in tLine
             if word 1 of tVariable is not among the tokens of tTheRest then
-               put lineOffset(tLine, pScript) into tLineNumber
+               put lineOffset(tOffsetLine, pScript) into tLineNumber
                if tLineNumber is not 0 then
                   put tLineNumber & tab & "unused" && pType && tVariable & cr after tOrphanList
                end if
@@ -2395,6 +2402,7 @@ end globalOrphansOf
 private function getIDEMessages pElementType
    local tMessagesA, tAllMessagesA
    
+   -- bernd's discovery
    put ideDocsFetchLCSElementsOfType(pElementType) into tMessagesA
    repeat for each key aKey in tMessagesA
       put tMessagesA[aKey]["display Name"] & cr after tAllMessagesA
@@ -2408,7 +2416,7 @@ end getIDEMessages
 */
 private function filteredScript pText, pScript
    filter pScript with pText
-   filter pScript without regex pattern "\**"
+   --filter pScript without regex pattern "\**"
    return pScript
 end filteredScript
 

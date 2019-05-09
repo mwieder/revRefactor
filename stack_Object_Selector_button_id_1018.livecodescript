@@ -7,10 +7,5 @@ Script "stack_Object_Selector_button_id_1018"
 
 
 on mouseUp
-  -- this is the cancel button
-  -- add your own code here
-  answer "close this stack?" with "no" and "yes"
-  if it is "yes" then
-    close this stack
-  end if
+   close this stack
 end mouseUp

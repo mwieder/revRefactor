@@ -19,7 +19,3 @@ on menuPick pChosen
    set the dialogdata to tSelected
    close this stack
 end menuPick
-
-on mouseUp
-   put "mouseUp" & cr after msg
-end mouseUp
