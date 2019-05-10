@@ -2339,9 +2339,14 @@ private function listOrphansOfType pType, pScript
    -- see if there's anything to work with
    local tOffsetLine
    if tFilteredScript is not empty then
+      local tPos
       repeat for each line tLine in tFilteredScript
          put tLine into tOffsetLine
          delete word 1 of tLine -- should be pType
+         put offset("=", tLine) into tPos
+         if tPos > 0 then
+            delete char tPos to -1 of tLine
+         end if
          repeat for each item tVariable in tLine
             if word 1 of tVariable is not among the tokens of tTheRest then
                put lineOffset(tOffsetLine, pScript) into tLineNumber
