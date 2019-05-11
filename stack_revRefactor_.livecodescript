@@ -70,6 +70,10 @@ Script "stack_revRefactor_"
 2019.05.08 mdw
 * listOrphansOfType needed tweaking after refactoring (irony rears its ugly head)
 * don't remember why filteredScript was trying to filter out regex "\**"
+2019.05.11 mdw
+* serious refactoring of availableHandlersOf because:
+* it wasn't returning the right information if there were unapplied edits
+* and it needed a multidimensional array to catch duplicate handlers
 */
 
 -- some fake constants
@@ -325,7 +329,7 @@ private function scriptFromEditor pObject
    put the result into tReturnValue
    return tReturnValue
 end scriptFromEditor
-   
+
 private command CreateGetterAndSetterFor pVariableName
    local tScript
    
@@ -500,14 +504,14 @@ end RemoveDeclaration
 private function regexWholeWordFrom pWord
    return "\b" & pWord & "\b"
 end regexWholeWordFrom
-   
-   /**
-   * ConvertLocalVariableTo
-   * convert local variable to
-   *  script-local variable
-   *  parameter of the containing handler
-   *  property
-   */
+
+/**
+* ConvertLocalVariableTo
+* convert local variable to
+*  script-local variable
+*  parameter of the containing handler
+*  property
+*/
 private command ConvertLocalVariableTo pVariableName, pType
    local tType
    local tScript
@@ -651,7 +655,7 @@ end ConvertLocalVariableTo
 private command insertText pText, pStartLineNumber, pEndLineNUmber, @pScript
    put pText into line pStartLineNumber+1 to pEndLineNumber of pScript
 end insertText
-   
+
 private command insertGetterAndSetter pVar, @pScript
    local kCRLF, kTAB
    
@@ -1806,6 +1810,12 @@ private command insertAtStartOfScript pLine, @pScript
    return tInsertionPoint
 end insertAtStartOfScript
 
+/**
+* ContextForCurrentLine
+*
+* return the start and end line numbers and the handler name
+* for the handler containing the currently selected line
+*/
 private function ContextForCurrentLine
    local tTarget
    
@@ -1818,7 +1828,7 @@ end ContextForCurrentLine
 * ScriptContextForLineNumber
 *
 * return the start and end line numbers and the handler name
-* for the handler containing the currently selected line
+* for the handler containing the given line
 */
 private function ScriptContextForLineNumber pSelectedLine
    local tHandlerList
@@ -1827,7 +1837,6 @@ private function ScriptContextForLineNumber pSelectedLine
    -- if the script has been edited by not applied
    -- revavailablehandlers will return wrong information
    put CurrentObject() into tObject
-   -- revAvailableHandlers is wrong if there are unapplied edits - have to roll our own
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tHandler in tHandlerList
       -- check the start line
@@ -1841,117 +1850,109 @@ private function ScriptContextForLineNumber pSelectedLine
    return tHandler
 end ScriptContextForLineNumber
 
-private function stripCommentsFrom pScript
-   local tIsInBlockComment
-   local tScript
+private function extractHandlerTextAtLine pLineNumber, pScript
+   local tInsertionPoint, tStartLineNumber, tEndLineNumber
+   local tHandler
    
-   put false into tIsInBlockComment
-   repeat for each line tLine in pScript
-      if "*/" is in tLine then
-         put false into tIsInBlockComment
-         next repeat
-      end if
-      if tIsInBlockComment then
-         next repeat
-      end if
-      switch char 1 to 2 of word 1 of tLine
-         case "//"
-         case "--"
-         case "# "
-            next repeat
-            break
-         case "/*"
-            put true into tIsInBlockComment
-            next repeat
-            break
-      end switch
-      put tLine & cr after tScript
-   end repeat
-   return tScript
-end stripCommentsFrom
+   put ScriptContextForLineNumber(pLineNumber) into tInsertionPoint
+   put word 3 of tInsertionPoint into tStartLineNumber
+   put word 4 of tInsertionPoint into tEndLineNumber
+   put line tStartLineNumber+1 to tEndLineNumber of pScript into tHandler
+   return tHandler
+end extractHandlerTextAtLine
 
-private function availableHandlersOf pObject
+function availableHandlersOf pObject
+   -- revAvailableHandlers is wrong if there are unapplied edits
+   -- and doesn't find duplicate handlers
+   -- so we have to roll our own
    local tHandlerList
    local tEditors, tTargetObjects
    local tScript, tHandlers
    local tStartLine, tEndLine, tHandler
    local tHandlerArray
-   local tIsPrivate
    local tHandlerType
    
-   dispatch function "seGetObjectState" to stack main with pObject
-   if the result is "applied" then
-      put the revAvailableHandlers of pObject into tHandlerList
-   else
-      put revListScriptEditors() into tEditors
-      repeat for each line tEditor in tEditors
-         -- get a list of the objects being edited
-         dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
-         put the result after tTargetObjects
-         if pObject is among the lines of tTargetObjects then
-            put scriptFromEditor(pObject) into tScript
-            put tScript into tHandlers
-            -- strip comments from tHandlers
-            put stripCommentsFrom(tHandlers) into tHandlers
-            
-            filter tHandlers with "end*"
-            replace "command " with "on " in tScript
-            replace "before " with "on " in tScript
-            replace "after " with "on " in tScript
-            repeat for each line tHandlerLine in tHandlers
-               put word 2 of tHandlerLine into tHandler
-               put lineoffset(tHandlerLine, tScript) into tHandlerArray[tHandler]["endline"]
-               put 0 into tStartLine
-               
-               put lineoffset("function" && tHandler, tScript) into tStartLine
-               if tStartLine is 0 then
-                  put lineoffset("on" && tHandler, tScript) into tStartLine
-               end if
-               if tStartLine is 0 then
-                  put lineoffset("private function" && tHandler, tScript) into tStartLine
-               end if
-               if tStartLine is 0 then
-                  put lineoffset("private on" && tHandler, tScript) into tStartLine
-               end if
-               if tStartLine is 0 then
-                  put lineoffset("getProp" && tHandler, tScript) into tStartLine
-               end if
-               if tStartLine is 0 then
-                  put lineoffset("setProp" && tHandler, tScript) into tStartLine
-               end if
-               put word 1 of line tStartLine of tScript is "private" into tIsPrivate
-               
-               local tCommandOrFunction
-               if tIsPrivate then
-                  put "P" into tHandlerType
-                  put word 2 of line tStartLine of tScript into tCommandOrFunction
-               else
-                  put empty into tHandlerType
-                  put word 1 of line tStartLine of tScript into tCommandOrFunction
-               end if
-               switch tCommandOrFunction
-                  case "on"
-                  case "setProp"
-                     put "M" after tHandlerType
-                     break
-                  case "function"
-                  case "getProp"
-                     put "F" after tHandlerType
-                     break
-               end switch
-               put tHandlerType into tHandlerArray[tHandler]["type"]
-               put tStartLine into tHandlerArray[tHandler]["startline"]
-            end repeat
-         end if
-      end repeat
-      repeat for each key tHandler in tHandlerArray
-         put tHandlerArray[tHandler]["type"] && \
+   put revListScriptEditors() into tEditors
+   repeat for each line tEditor in tEditors
+      -- get a list of the objects being edited in all editors
+      dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
+      put the result after tTargetObjects
+      if pObject is among the lines of tTargetObjects then
+         put scriptFromEditor(pObject) into tScript
+         put tScript into tHandlers
+         removeCommentsFrom tHandlers
+         replace "command " with "on " in tHandlers
+         
+         local tHandlerStarts, tLastLineNumber, tPos
+         filter tHandlers with "[ba][ef][ft]*" into tHandlerStarts
+         put 0 into tLastLineNumber
+         repeat for each line tLine in tHandlerStarts
+            put word 2 of tLine into tHandler
+            put lineoffset(tLine, tScript, tLastLineNumber) into tPos
+            put tPos + tLastLineNumber into tLastLineNumber
+            switch word 1 of tLine
+               case "before"
+                  put "B" into tHandlerType
+                  break
+               case "after"
+                  put "A" into tHandlerType
+                  break
+            end switch
+            put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
+            put tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["startline"]
+            put lineoffset("end" && tHandler, tScript, tLastLineNumber) into tPos
+            put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
+         end repeat
+         
+         filter tHandlers with regex pattern "function .*" into tHandlerStarts
+         put 0 into tLastLineNumber
+         repeat for each line tLine in tHandlerStarts
+            if word 1 of tLine is "private" then
+               put "F" into tHandlerType
+               put word 3 of tLine into tHandler
+            else
+               put "F" into tHandlerType
+               put word 2 of tLine into tHandler
+            end if
+            put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
+            put tPos + tLastLineNumber into tLastLineNumber
+            put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
+            put tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["startline"]
+            put lineoffset("end" && tHandler, tScript, tLastLineNumber) into tPos
+            put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
+         end repeat
+         
+         filter tHandlers with "[pco][ron][im ]*" into tHandlerStarts
+         filter tHandlerStarts without "* function *"
+         put 0 into tLastLineNumber
+         repeat for each line tLine in tHandlerStarts
+            if word 1 of tLine is "private" then
+               put "M" into tHandlerType
+               put word 3 of tLine into tHandler
+            else
+               put "M" into tHandlerType
+               put word 2 of tLine into tHandler
+            end if
+            put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
+            put tPos + tLastLineNumber into tLastLineNumber
+            put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
+            put tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["startline"]
+            put lineoffset("end" && tHandler, tScript, tLastLineNumber) into tPos
+            put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
+         end repeat
+      end if
+   end repeat
+   
+   repeat for each key tHandler in tHandlerArray
+      repeat for each key tHandlerLine in tHandlerArray[tHandler]
+         put tHandlerArray[tHandler][tHandlerLine]["type"] && \
                tHandler && \
-               tHandlerArray[tHandler]["startline"] && \
-               tHandlerArray[tHandler]["endline"] & cr after tHandlerList
+               tHandlerArray[tHandler][tHandlerLine]["startline"] && \
+               tHandlerArray[tHandler][tHandlerLine]["endline"] & cr after tHandlerList
       end repeat
-   end if
-   sort tHandlerList by word 3 of each
+   end repeat
+   sort lines of tHandlerList by word 1 of each
+   sort lines of tHandlerList by word 2 of each
    return tHandlerList
 end availableHandlersOf
 
@@ -2151,6 +2152,28 @@ private command setSEDirtyFlagFor pObject
    dispatch "textReplace" to group "Editor" of stack main with 1, "", "", pObject
 end setSEDirtyFlagFor
 
+private function FindDuplicateHandlersIn pScript
+   local tDuplicates
+   local tObject
+   local tHandlerList
+   local tPreviousLine
+   
+   put CurrentObject() into tObject
+   -- revAvailableHandlers is wrong if there are unapplied edits - have to roll our own
+   put availableHandlersOf(tObject) into tHandlerList
+   repeat for each line tLine in tHandlerList
+      if char 1 of tLine is "P" then
+         delete char 1 of tLine
+      end if
+      if word 1 to 2 of tLine is word 1 to 2 of tPreviousLine then
+         put word 3 of tLine & tab & "duplicate handler" && word 2 of tLine & cr after tDuplicates
+         --put tLine & cr after tDuplicates
+      end if
+      put tLine into tPreviousLine
+   end repeat
+   return tDuplicates
+end FindDuplicateHandlersIn
+
 /**
 -- in this script:
 -- find unused globals
@@ -2205,36 +2228,43 @@ private command FindOrphans pObject
       add 1 to tLineNumber
    end repeat
    
+   put FindDuplicateHandlersIn(tScript) after tOrphanList
+   
+   displayUndeclaredVars tUndeclared
+   displayOrphans tOrphanList, tUndeclaredList is not empty
+end FindOrphans
+
+private command displayUndeclaredVars pUndeclaredList
    -- see if there are any present then
-   if tUndeclared is empty then -- nothing to see here
+   if pUndeclaredList is empty then -- nothing to see here
    else
       -- place the undeclared variables on the Undeclared card
-      put tUndeclared into field "fldUndeclared" of card "Undeclared" of me
+      put pUndeclaredList into field "fldUndeclared" of card "Undeclared" of me
       set the visible of button "btnUndeclared" of card "Orphans" of me to true
    end if
-   
-   if tOrphanList is not empty or tUndeclaredList is not empty then
-      sort numeric tOrphanList
-      put tOrphanList into field "fldOrphanList" of card "Orphans" of me
+end displayUndeclaredVars
+
+private command displayOrphans pOrphanList, pUndeclaredVarsExist
+   if pOrphanList is not empty or pUndeclaredVarsExist then
+      sort numeric pOrphanList
+      put pOrphanList into field "fldOrphanList" of card "Orphans" of me
       palette me
       set the visible of me to true
-      if tOrphanList is not empty then
+      if pOrphanList is not empty then
          go card "Orphans" of stack self
       else
          go card "Undeclared" of stack self
       end if
    end if
-end FindOrphans
+end displayOrphans
 
 private function listUndeclaredVariablesIn pScript
-   -- find undeclared variables if explicitVars is false
    local tUndeclared, tVariable
    local tTestScript, tGlobals, tLocals
    local tLineNumber
    local tCurrentHandler
    local tHandlerList
    local tVariables
-   --constant kExplicitVars = "cScriptEditor,explicitVariables"
    
    set the visible of button "btnUndeclared" of card "Orphans" of me to false
    dispatch "revSEGetPreference" to stack "revseutilities"  with "explicitVariables"
@@ -2316,6 +2346,7 @@ private command removeCommentsFrom @pText
    
    put true into tFound
    repeat while tFound is true
+      -- locate block comments
       put matchchunk(pText, "(?s)(/\*.*?\*/)", tStart, tEnd) into tFound
       if tFound then
          -- get the block comment
@@ -2332,6 +2363,7 @@ private command removeCommentsFrom @pText
          end repeat
       end if
    end repeat
+   -- remove single-line comments
    put replacetext(pText, "#.*", " ") into pText
    put replacetext(pText, "--.*", " ") into pText
    put replacetext(pText, "//.*", " ") into pText
@@ -2347,7 +2379,7 @@ end removeCommentsFrom
 */
 private function listOrphansOfType pType, pScript
    local tOrphanList
-   local tFilteredScript, tTheRest, tConstantList
+   local tFilteredScript, tConstantList
    local tLineNumber
    
    -- look for declarations
@@ -2358,15 +2390,10 @@ private function listOrphansOfType pType, pScript
       end repeat
       put tConstantList into tFilteredScript
    end if
-   put pScript into tTheRest
-   -- check what's left for usage
-   filter tTheRest without "*" & pType && "*"
-   removeCommentsFrom tTheRest
    -- see if there's anything to work with
    local tOffsetLine
    if tFilteredScript is not empty then
       local tPos
-      --repeat for each line tLine in tFilteredScript
       repeat for each key tKey in sScriptArray
          put sScriptArray[tKey] into tLine
          put tLine into tOffsetLine
@@ -2377,18 +2404,11 @@ private function listOrphansOfType pType, pScript
             delete char tPos to -1 of tLine
          end if
          
-         local tInsertionPoint, tStartLineNumber, tEndLineNumber
-         put ScriptContextForLineNumber(tKey) into tInsertionPoint
-         put word 3 of tInsertionPoint into tStartLineNumber
-         put word 4 of tInsertionPoint into tEndLineNumber
-         put line tStartLineNumber+1 to tEndLineNumber of pScript into tTheRest
-         filter tTheRest without "*" & pType & " *"
+         local tScope
+         put extractHandlerTextAtLine(tKey, pScript) into tScope
+         filter tScope without "*" & pType & " *"
          repeat for each item tVariable in tLine
-            if word 1 of tVariable is not among the tokens of tTheRest then
-               --               put lineOffset(tOffsetLine, pScript) into tLineNumber
-               --               if tLineNumber is not 0 then
-               --                  put tLineNumber & tab & "unused" && pType && tVariable & cr after tOrphanList
-               --               end if
+            if word 1 of tVariable is not among the tokens of tScope then
                put tKey & tab & "unused" && pType && tVariable & cr after tOrphanList
             end if
          end repeat
@@ -2415,9 +2435,7 @@ private function globalOrphansOf pObject
    
    put getIDEMessages("message") into tAllMessagesA
    
-   -- revAvailableHandlers is wrong if unapplied edits - have to roll our own
    put availableHandlersOf(pObject) into tHandlerList
-   
    repeat for each line tHandlerDetails in tHandlerList
       if tAllMessagesA[word 2 of tHandlerDetails] or word 2 of tHandlerDetails begins with "rev" then
          next repeat
