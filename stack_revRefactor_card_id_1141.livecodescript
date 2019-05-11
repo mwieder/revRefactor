@@ -1,16 +1,15 @@
-Script "stack_revRefactor_card_id_1119"
+Script "stack_revRefactor_card_id_1141"
 
 /*
-# Name: card "Orphans" of stack "revRefactor"
-# ID: card id 1119 of stack "revRefactor"
+# Name: card "Undeclared" of stack "revRefactor"
+# ID: card id 1141 of stack "revRefactor"
 */
 
 
 on resizeStack
    local tRect
-   constant kOrphanField = "fldOrphanList"
+   constant kOrphanField = "fldUndeclared"
    constant kOKButton = "Button_1"
-   constant kUndeclaredButton = "btnUndeclared"
    
    lock screen
    put the rect of field kOrphanField into tRect
@@ -21,7 +20,6 @@ on resizeStack
    
    set the bottom of button kOKButton to the bottom of this card - 20
    set the right of button kOKButton to the right of field kOrphanField
-   set the bottom of button kUndeclaredButton to the bottom of this card - 20
-   set the left of button kUndeclaredButton to the left of field kOrphanField
    unlock screen
 end resizeStack
+

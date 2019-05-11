@@ -443,7 +443,7 @@ private command addLocalVariableToHandler pVariableName, @pScript
    local tStartLineNumber, tEndLineNumber
    local tGlobalScript
    
-   put ScriptContext() into tInsertionPoint
+   put ContextForCurrentLine() into tInsertionPoint
    put word 3 of tInsertionPoint into tStartLineNumber
    put word 4 of tInsertionPoint into tEndLineNumber
    put line tStartLineNumber+1 to tEndLineNumber of pScript into tGlobalScript
@@ -507,7 +507,7 @@ end regexWholeWordFrom
    *  parameter of the containing handler
    *  property
    */
-   private command ConvertLocalVariableTo pVariableName, pType
+private command ConvertLocalVariableTo pVariableName, pType
    local tType
    local tScript
    local tLocalScript --, tTestScript
@@ -548,7 +548,7 @@ end regexWholeWordFrom
             local tWordCount
             
             -- find start of handler
-            put ScriptContext() into tInsertionPoint
+            put ContextForCurrentLine() into tInsertionPoint
             put word 3 of tInsertionPoint into tStartLineNumber
             put word 4 of tInsertionPoint into tEndLineNumber
             put line tStartLineNumber+1 to tEndLineNumber of tScript into tLocalScript
@@ -591,7 +591,7 @@ end regexWholeWordFrom
                local tLines
                put the number of lines in tScript into tLines
                -- find start of handler
-               put ScriptContext() into tInsertionPoint
+               put ContextForCurrentLine() into tInsertionPoint
                put word 3 of tInsertionPoint into tStartLineNumber
                put word 4 of tInsertionPoint into tEndLineNumber
                put line tStartLineNumber+1 to tEndLineNumber of tScript into tLocalScript
@@ -688,7 +688,7 @@ private command ConvertLocalVariableToScriptLocal pVariableName, @pScript
    local tStartLineNumber, tEndLineNumber
    local tLocalScript
    
-   put ScriptContext() into tInsertionPoint
+   put ContextForCurrentLine() into tInsertionPoint
    put word 3 of tInsertionPoint into tStartLineNumber
    put word 4 of tInsertionPoint into tEndLineNumber
    put line tStartLineNumber+1 to tEndLineNumber of pScript into tLocalScript
@@ -751,7 +751,7 @@ private command ChangeSignature pContextText
    put scriptFromEditor() into tScript
    set the itemDelimiter to comma
    set the wholematches to true
-   put ScriptContext() into tInsertionPoint
+   put ContextForCurrentLine() into tInsertionPoint
    put word 3 of tInsertionPoint into tStartLineNumber
    put word 4 of tInsertionPoint into tEndLineNumber
    
@@ -1129,7 +1129,7 @@ private command AddTestAtLine pSelectedLine
    lock screen
    
    local tHandlerList
-   put scriptContext() into tHandlerList
+   put ContextForCurrentLine() into tHandlerList
    put word 3 of tHandlerList into tLineNumber
    put line tLineNumber of tScript into tFunctionLine
    
@@ -1312,7 +1312,7 @@ private command AddDocsAtLine pSelectedLine
    
    lock screen
    put scriptFromEditor() into tScript
-   put scriptContext() into tHandlerList
+   put ContextForCurrentLine() into tHandlerList
    put word 3 of tHandlerList into tLineNumber
    put line tLineNumber of tScript into tFunctionLine
    
@@ -1372,7 +1372,7 @@ private function GenerateDocsFor pLine, pType, pHandler, pParameters
    local tFunctionReturnValue
    local tHandlerList
    if pType is "function" then
-      put scriptContext() into tHandlerList
+      put ContextForCurrentLine() into tHandlerList
       put word 4 of tHandlerList into tUpperLimit
       repeat
          put lineoffset("return", tScript, pLine) into tReturnLine
@@ -1450,7 +1450,7 @@ private command RenameHandler pVarName
          lock screen         
          local tInsertionPoint, tStartLineNumber, tEndLineNumber
          local tLine, tParamsArray, tOldParams
-         put ScriptContext() into tInsertionPoint
+         put ContextForCurrentLine() into tInsertionPoint
          put word 3 of tInsertionPoint into tStartLineNumber
          put word 4 of tInsertionPoint into tEndLineNumber
          put line tStartLineNumber of tScript into tLine
@@ -1550,7 +1550,7 @@ private command RenameVariable pVariableName
          else
             -- just this handler
             local tInsertionPoint
-            put ScriptContext() into tInsertionPoint
+            put ContextForCurrentLine() into tInsertionPoint
             put word 3 of tInsertionPoint into tStartLineNumber
             put word 4 of tInsertionPoint into tEndLineNumber
             put line tStartLineNumber to tEndLineNumber of tScript into tLocalScript
@@ -1645,7 +1645,7 @@ private command CopyOrMove pMode
    local tObjectID, tControlsList, tControlNamesList
    
    put CurrentObject() into tObjectID
-   put ScriptContext() into tInsertionPoint
+   put ContextForCurrentLine() into tInsertionPoint
    -- get just the handler name
    put word 2 of tInsertionPoint into tHandler
    put pMode && tHandler && "to where?" into field "fldObjects" of stack "Object Selector" of me
@@ -1729,7 +1729,7 @@ private command SafeDelete pHandlerName
       answer "Not safe to delete. Used here:" & cr & tList
    else
       lock screen
-      put ScriptContext() into tLinesToDelete
+      put ContextForCurrentLine() into tLinesToDelete
       put CurrentObject() into tObject
       set the itemDelimiter to comma
       put word 3 of tLinesToDelete into tStartLineNumber
@@ -1804,19 +1804,23 @@ private command insertAtStartOfScript pLine, @pScript
    return tInsertionPoint
 end insertAtStartOfScript
 
+private function ContextForCurrentLine
+   local tTarget
+   
+   focus on field kCodeField of group "Editor" of stack main
+   put word 2 of the selectedline into tTarget
+   return ScriptContextForLineNumber(tTarget)
+end ContextForCurrentLine
+
 /**
-* ScriptContext
+* ScriptContextForLineNumber
 *
 * return the start and end line numbers and the handler name
 * for the handler containing the currently selected line
 */
-private function ScriptContext
-   local tTarget
+private function ScriptContextForLineNumber pSelectedLine
    local tHandlerList
    local tObject
-   
-   focus on field kCodeField of group "Editor" of stack main
-   put word 2 of the selectedline into tTarget
    
    -- if the script has been edited by not applied
    -- revavailablehandlers will return wrong information
@@ -1825,15 +1829,15 @@ private function ScriptContext
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tHandler in tHandlerList
       -- check the start line
-      if word 3 of tHandler <= tTarget then
+      if word 3 of tHandler <= pSelectedLine then
          -- check the end line
-         if word 4 of tHandler >= tTarget then
+         if word 4 of tHandler >= pSelectedLine then
             exit repeat
          end if
       end if
    end repeat
    return tHandler
-end ScriptContext
+end ScriptContextForLineNumber
 
 private function stripCommentsFrom pScript
    local tIsInBlockComment
@@ -2306,9 +2310,10 @@ private function listUndeclaredVariablesIn pScript
 end listUndeclaredVariablesIn
 
 private command removeCommentsFrom @pText
-   filter pText without "*#*"
-   filter pText without "*--*"
-   filter pText without "\**"
+   put replacetext(pText, "(?s)/\*.*?\*/", "") into pText
+   put replacetext(pText, "#.*", "") into pText
+   put replacetext(pText, "--.*", "") into pText
+   put replacetext(pText, "//.*", "") into pText
 end removeCommentsFrom
 
 /**
@@ -2419,9 +2424,9 @@ end getIDEMessages
 /**
 * filteredScript
 */
-private function filteredScript pText, pScript
-   filter pScript with pText
-   --filter pScript without regex pattern "\**"
+private function filteredScript pType, pScript
+   removeCommentsFrom pScript
+   filter pScript with pType
    return pScript
 end filteredScript
 
