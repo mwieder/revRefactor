@@ -84,6 +84,7 @@ constant kKeywords = "end,private,on,command,function,getProp,setProp,before,aft
 constant self = "revRefactor"
 
 local sNewParamsArray
+local sScriptArray
 
 command activateGLX2se
    put "code storage" into kCodeField
@@ -510,7 +511,7 @@ end regexWholeWordFrom
 private command ConvertLocalVariableTo pVariableName, pType
    local tType
    local tScript
-   local tLocalScript --, tTestScript
+   local tLocalScript, tLocalScriptArray
    local tInsertionPoint
    local tStartLineNumber, tEndLineNumber
    local tObject
@@ -529,7 +530,8 @@ private command ConvertLocalVariableTo pVariableName, pType
       switch tType
          case "script local"
             -- see if the variable was declared
-            put filteredScript("*local *" & pVariableName & "*", tScript) into tLocalScript
+            put filteredScript("*local *" & pVariableName & "*", tScript) into tLocalScriptArray
+            put tLocalScriptArray into tLocalScript
             -- no local declaration
             if tLocalScript is empty then
                if filteredScript("*global *" & pVariableName & "*", tScript) is empty then
@@ -2237,7 +2239,6 @@ private function listUndeclaredVariablesIn pScript
    set the visible of button "btnUndeclared" of card "Orphans" of me to false
    dispatch "revSEGetPreference" to stack "revseutilities"  with "explicitVariables"
    if the result is true then
-      --if the kExplicitVars of stack "revPreferences" is true then
    else
       -- put the undeclared variables into tUndeclared
       put 1 into tLineNumber
@@ -2310,10 +2311,30 @@ private function listUndeclaredVariablesIn pScript
 end listUndeclaredVariablesIn
 
 private command removeCommentsFrom @pText
-   put replacetext(pText, "(?s)/\*.*?\*/", "") into pText
-   put replacetext(pText, "#.*", "") into pText
-   put replacetext(pText, "--.*", "") into pText
-   put replacetext(pText, "//.*", "") into pText
+   local tStart, tEnd, tText, tFound
+   local x, y
+   
+   put true into tFound
+   repeat while tFound is true
+      put matchchunk(pText, "(?s)(/\*.*?\*/)", tStart, tEnd) into tFound
+      if tFound then
+         -- get the block comment
+         put char tStart to tEnd of pText into tText
+         put 1 into y
+         -- replace the comment
+         put " " into char tStart to tEnd of pText
+         -- now restore the line count
+         repeat with x =  tStart to tEnd
+            if char y of tText is cr then
+               put cr after char tStart of pText
+            end if
+            add 1 to y
+         end repeat
+      end if
+   end repeat
+   put replacetext(pText, "#.*", " ") into pText
+   put replacetext(pText, "--.*", " ") into pText
+   put replacetext(pText, "//.*", " ") into pText
 end removeCommentsFrom
 
 /**
@@ -2345,19 +2366,30 @@ private function listOrphansOfType pType, pScript
    local tOffsetLine
    if tFilteredScript is not empty then
       local tPos
-      repeat for each line tLine in tFilteredScript
+      --repeat for each line tLine in tFilteredScript
+      repeat for each key tKey in sScriptArray
+         put sScriptArray[tKey] into tLine
          put tLine into tOffsetLine
          delete word 1 of tLine -- should be pType
+         -- remove initialization value
          put offset("=", tLine) into tPos
          if tPos > 0 then
             delete char tPos to -1 of tLine
          end if
+         
+         local tInsertionPoint, tStartLineNumber, tEndLineNumber
+         put ScriptContextForLineNumber(tKey) into tInsertionPoint
+         put word 3 of tInsertionPoint into tStartLineNumber
+         put word 4 of tInsertionPoint into tEndLineNumber
+         put line tStartLineNumber+1 to tEndLineNumber of pScript into tTheRest
+         filter tTheRest without "*" & pType & " *"
          repeat for each item tVariable in tLine
             if word 1 of tVariable is not among the tokens of tTheRest then
-               put lineOffset(tOffsetLine, pScript) into tLineNumber
-               if tLineNumber is not 0 then
-                  put tLineNumber & tab & "unused" && pType && tVariable & cr after tOrphanList
-               end if
+               --               put lineOffset(tOffsetLine, pScript) into tLineNumber
+               --               if tLineNumber is not 0 then
+               --                  put tLineNumber & tab & "unused" && pType && tVariable & cr after tOrphanList
+               --               end if
+               put tKey & tab & "unused" && pType && tVariable & cr after tOrphanList
             end if
          end repeat
       end repeat
@@ -2425,9 +2457,21 @@ end getIDEMessages
 * filteredScript
 */
 private function filteredScript pType, pScript
+   local x
+   local tScript
+   
+   replace "*" with empty in pType
+   delete variable sScriptArray
+   put 1 into x
    removeCommentsFrom pScript
-   filter pScript with pType
-   return pScript
+   repeat for each line tLine in pScript
+      if word 1 of tLine begins with word 1 of pType then
+         put tLine into sScriptArray[x]
+         put tLine & cr after tScript
+      end if
+      add 1 to x
+   end repeat
+   return tScript
 end filteredScript
 
 local sEditObjects
