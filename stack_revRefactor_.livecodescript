@@ -70,10 +70,13 @@ Script "stack_revRefactor_"
 2019.05.08 mdw
 * listOrphansOfType needed tweaking after refactoring (irony rears its ugly head)
 * don't remember why filteredScript was trying to filter out regex "\**"
-2019.05.11 mdw
+2019.05.11 mdw version 1.0.9
 * serious refactoring of availableHandlersOf because:
 * it wasn't returning the right information if there were unapplied edits
 * and it needed a multidimensional array to catch duplicate handlers
+2019.05.11 mdw version 1.0.10
+* reworked DoReplace to handle quoted strings
+* and that required a one-line change to ChangeSignatureInScript
 */
 
 -- some fake constants
@@ -319,6 +322,7 @@ end revHookScriptEditorContextMenuPick
 private function scriptFromEditor pObject
    local tReturnValue
    
+   lock screen
    if pObject is not empty then
       edit the script of pObject
    end if
@@ -327,6 +331,7 @@ private function scriptFromEditor pObject
       throw "unhandled function textGetScript"
    end if
    put the result into tReturnValue
+   unlock screen
    return tReturnValue
 end scriptFromEditor
 
@@ -411,7 +416,7 @@ private command ConvertGlobalTo pVariableName, pType
    put CurrentObject() into tObject
    put scriptFromEditor() into tScript
    -- see if the global was declared
-   put filteredScript("*global*" & pVariableName & "*", tScript) into tGlobalScript
+   put filteredScript("global *" & pVariableName & "*", tScript) into tGlobalScript
    
    if tGlobalScript is not empty then
       -- remove global declarations
@@ -534,11 +539,11 @@ private command ConvertLocalVariableTo pVariableName, pType
       switch tType
          case "script local"
             -- see if the variable was declared
-            put filteredScript("*local *" & pVariableName & "*", tScript) into tLocalScriptArray
+            put filteredScript("local *" & pVariableName & "*", tScript) into tLocalScriptArray
             put tLocalScriptArray into tLocalScript
             -- no local declaration
             if tLocalScript is empty then
-               if filteredScript("*global *" & pVariableName & "*", tScript) is empty then
+               if filteredScript("global *" & pVariableName & "*", tScript) is empty then
                   Undo.Pop tObject, "Undo.RestoreScript"
                   insertAtStartOfScript "local" && pVariableName, tScript
                else
@@ -1020,7 +1025,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                   end repeat -- with tOriginalindex=1 to tNewNumParameters
                   chopIf comma, tParams
                   if char 1 of tParams is comma then
-                     put q(" ") before tParams
+                     put "pUndelcaredParameter" before tParams
                   end if
                   
                   local tReplacementPosition, tEndpoint
@@ -1151,7 +1156,7 @@ private command AddTestAtLine pSelectedLine
       end if
       
       if tLineNumber is empty then
-         put filteredScript("*" & tFunctionType && tFunction && "*", tScript) into tFilteredScript
+         put filteredScript(tFunctionType && tFunction && "*", tScript) into tFilteredScript
          put lineoffset(tFilteredScript, tScript) into tLineNumber
       end if
       
@@ -1358,7 +1363,7 @@ private function GenerateDocsFor pLine, pType, pHandler, pParameters
    
    put scriptFromEditor() into tScript
    if pLine is empty then
-      put filteredScript("*" & pType && pHandler && "*", tScript) into tFilteredScript
+      put filteredScript(pType && pHandler && "*", tScript) into tFilteredScript
       put lineoffset(tFilteredScript, tScript) into pLine
    end if
    
@@ -1606,23 +1611,15 @@ end RenameVariable
 * Returns: the string with replacements made
 */
 private function DoReplace pScript, pOutgoingString, pIncomingString
-   local tScript
-   local tIsQuoted
+   local tWordNumber
    
-   replace quote with numtochar(3) in pScript
-   replace quote with numtochar(3) in pIncomingString
-   put token 1 to -1 of pScript into tScript
-   if quote is in pOutgoingString then
-      put true into tIsQuoted
-   end if
-   replace quote with numtochar(3) in pOutgoingString
-   if tIsQuoted is true then
-      put replaceText(tScript, "(?i)"& pOutgoingString, pIncomingString) into tScript
-   else
-      put replaceText(tScript, "(?i)"& regexWholeWordFrom(pOutgoingString), pIncomingString) into tScript
-   end if
-   put tScript into token 1 to -1 of pScript
-   replace numtochar(3) with quote in pScript
+   put 1 into tWordNumber
+   repeat for each word tWord in pScript
+      if tWord is pOutgoingString then
+         put pIncomingString into word tWordNumber of pScript
+      end if
+      add 1 to tWordNumber
+   end repeat   
    return pScript
 end DoReplace
 
@@ -1711,7 +1708,6 @@ private command CopyOrMove pMode
             delete line tStartLineNumber to tEndLineNumber of tScript
             SetScript tScript
          end if
-         --end if
       catch e
          answer e
       end try
@@ -1843,11 +1839,12 @@ private function ScriptContextForLineNumber pSelectedLine
       if word 3 of tHandler <= pSelectedLine then
          -- check the end line
          if word 4 of tHandler >= pSelectedLine then
-            exit repeat
+            return tHandler
          end if
       end if
    end repeat
-   return tHandler
+   -- otherwise return the entire script scope
+   return "X Script 0 -1"
 end ScriptContextForLineNumber
 
 private function extractHandlerTextAtLine pLineNumber, pScript
@@ -1858,8 +1855,13 @@ private function extractHandlerTextAtLine pLineNumber, pScript
    put word 3 of tInsertionPoint into tStartLineNumber
    put word 4 of tInsertionPoint into tEndLineNumber
    put line tStartLineNumber+1 to tEndLineNumber of pScript into tHandler
+   if tStartLineNumber is 0 then
+      breakpoint
+   end if
    return tHandler
 end extractHandlerTextAtLine
+
+local sObjectHandlersArray
 
 function availableHandlersOf pObject
    -- revAvailableHandlers is wrong if there are unapplied edits
@@ -1872,6 +1874,9 @@ function availableHandlersOf pObject
    local tHandlerArray
    local tHandlerType
    
+   if sObjectHandlersArray[pObject] is not empty then
+      return sObjectHandlersArray[pObject]
+   end if
    put revListScriptEditors() into tEditors
    repeat for each line tEditor in tEditors
       -- get a list of the objects being edited in all editors
@@ -1884,6 +1889,7 @@ function availableHandlersOf pObject
          replace "command " with "on " in tHandlers
          
          local tHandlerStarts, tLastLineNumber, tPos
+         -- get 'before' and 'after' handlers
          filter tHandlers with "[ba][ef][ft]*" into tHandlerStarts
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
@@ -1908,12 +1914,11 @@ function availableHandlersOf pObject
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
-               put "F" into tHandlerType
                put word 3 of tLine into tHandler
             else
-               put "F" into tHandlerType
                put word 2 of tLine into tHandler
             end if
+            put "F" into tHandlerType
             put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
             put tPos + tLastLineNumber into tLastLineNumber
             put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
@@ -1922,17 +1927,18 @@ function availableHandlersOf pObject
             put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
          end repeat
          
+         -- find 'private' 'command' and 'on' handlers
          filter tHandlers with "[pco][ron][im ]*" into tHandlerStarts
+         -- we already processed functions
          filter tHandlerStarts without "* function *"
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
-               put "M" into tHandlerType
                put word 3 of tLine into tHandler
             else
-               put "M" into tHandlerType
                put word 2 of tLine into tHandler
             end if
+            put "M" into tHandlerType
             put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
             put tPos + tLastLineNumber into tLastLineNumber
             put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
@@ -1953,6 +1959,8 @@ function availableHandlersOf pObject
    end repeat
    sort lines of tHandlerList by word 1 of each
    sort lines of tHandlerList by word 2 of each
+   -- cache the list for future use
+   put tHandlerList into sObjectHandlersArray[pObject]
    return tHandlerList
 end availableHandlersOf
 
@@ -2159,15 +2167,16 @@ private function FindDuplicateHandlersIn pScript
    local tPreviousLine
    
    put CurrentObject() into tObject
-   -- revAvailableHandlers is wrong if there are unapplied edits - have to roll our own
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tLine in tHandlerList
       if char 1 of tLine is "P" then
          delete char 1 of tLine
       end if
       if word 1 to 2 of tLine is word 1 to 2 of tPreviousLine then
+         if word 3 of tPreviousLine & tab & "duplicate handler" && word 2 of tPreviousLine is not in tDuplicates then
+            put word 3 of tPreviousLine & tab & "duplicate handler" && word 2 of tPreviousLine & cr after tDuplicates
+         end if
          put word 3 of tLine & tab & "duplicate handler" && word 2 of tLine & cr after tDuplicates
-         --put tLine & cr after tDuplicates
       end if
       put tLine into tPreviousLine
    end repeat
@@ -2190,6 +2199,7 @@ private command FindOrphans pObject
    local tLineNumber
    local tPutLine
    
+   lock screen
    if pObject is empty then
       put CurrentObject() into pObject
    end if
@@ -2232,20 +2242,24 @@ private command FindOrphans pObject
    
    displayUndeclaredVars tUndeclared
    displayOrphans tOrphanList, tUndeclaredList is not empty
+   unlock screen
 end FindOrphans
 
 private command displayUndeclaredVars pUndeclaredList
    -- see if there are any present then
    if pUndeclaredList is empty then -- nothing to see here
    else
+      lock screen
       -- place the undeclared variables on the Undeclared card
       put pUndeclaredList into field "fldUndeclared" of card "Undeclared" of me
       set the visible of button "btnUndeclared" of card "Orphans" of me to true
+      unlock screen
    end if
 end displayUndeclaredVars
 
 private command displayOrphans pOrphanList, pUndeclaredVarsExist
    if pOrphanList is not empty or pUndeclaredVarsExist then
+      lock screen
       sort numeric pOrphanList
       put pOrphanList into field "fldOrphanList" of card "Orphans" of me
       palette me
@@ -2255,6 +2269,7 @@ private command displayOrphans pOrphanList, pUndeclaredVarsExist
       else
          go card "Undeclared" of stack self
       end if
+      unlock screen
    end if
 end displayOrphans
 
@@ -2266,6 +2281,7 @@ private function listUndeclaredVariablesIn pScript
    local tHandlerList
    local tVariables
    
+   lock screen
    set the visible of button "btnUndeclared" of card "Orphans" of me to false
    dispatch "revSEGetPreference" to stack "revseutilities"  with "explicitVariables"
    if the result is true then
@@ -2337,12 +2353,16 @@ private function listUndeclaredVariablesIn pScript
          add 1 to tLineNumber
       end repeat
    end if
+   unlock screen
    return tUndeclared
 end listUndeclaredVariablesIn
 
 private command removeCommentsFrom @pText
    local tStart, tEnd, tText, tFound
    local x, y
+   local tSavedItemDelimiter
+   
+   removeQuotesFrom pText
    
    put true into tFound
    repeat while tFound is true
@@ -2355,7 +2375,7 @@ private command removeCommentsFrom @pText
          -- replace the comment
          put " " into char tStart to tEnd of pText
          -- now restore the line count
-         repeat with x =  tStart to tEnd
+         repeat with x = tStart to tEnd
             if char y of tText is cr then
                put cr after char tStart of pText
             end if
@@ -2368,6 +2388,28 @@ private command removeCommentsFrom @pText
    put replacetext(pText, "--.*", " ") into pText
    put replacetext(pText, "//.*", " ") into pText
 end removeCommentsFrom
+
+private command removeQuotesFrom @pText
+   local tSavedItemDelimiter
+   local tNoItems
+   
+   put the itemDelimiter into tSavedItemDelimiter
+   set the itemDelimiter to quote
+   put the number of items in pText into tNoItems
+   if tNoItems > 1 then
+      
+      local i
+      put 0 into i
+      repeat for each item tItem in pText
+         if i mod 2 = 0 then 
+            put empty into item i of pText
+         end if
+         add 1 to i
+      end repeat
+      
+   end if
+   set the itemDelimiter to tSavedItemDelimiter
+end removeQuotesFrom
 
 /**
 * listOrphansOfType
@@ -2383,10 +2425,10 @@ private function listOrphansOfType pType, pScript
    local tLineNumber
    
    -- look for declarations
-   put filteredScript("*" & pType && "*", pScript) into tFilteredScript
+   put filteredScript(pType && "*", pScript) into tFilteredScript
    if pType is "constant" then
       repeat for each line tLine in tFilteredScript
-         put word 1 to 2 of tLine & cr after tConstantList
+         put word 2 of tLine & cr after tConstantList
       end repeat
       put tConstantList into tFilteredScript
    end if
@@ -2478,7 +2520,6 @@ private function filteredScript pType, pScript
    local x
    local tScript
    
-   replace "*" with empty in pType
    delete variable sScriptArray
    put 1 into x
    removeCommentsFrom pScript
