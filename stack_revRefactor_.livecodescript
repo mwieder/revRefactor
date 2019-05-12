@@ -77,6 +77,32 @@ Script "stack_revRefactor_"
 2019.05.11 mdw version 1.0.10
 * reworked DoReplace to handle quoted strings
 * and that required a one-line change to ChangeSignatureInScript
+2019.05.12 mdw
+* FindDuplicates now flags ALL occurences of duplicate handlers
+* Constants are no longer flagged as unused (oops)...
+* and this uncovered the fact that the scope of script-local variables was being reported incorrectly
+* now catching getProp and setProp handlers as well as commands and functions
+* and reporting them as such for unused and duplicate lists
+*
+* lots of tweaking to handle backslashes
+* and ensure that script-local constants aren't flagged as unused
+*/
+
+/*
+* Known issues:
+* this format respects both the command name and variable as being used.
+* obviously it's not a good coding style, but still...
+command hello
+   local hello
+end hello
+
+* still a problem with multiline puts (the script editor also trips over this):
+on mouseUp
+   local tText
+   put "what" & " no " &\/* any*/
+         "more" into tText
+end mouseUp
+
 */
 
 -- some fake constants
@@ -92,6 +118,7 @@ constant self = "revRefactor"
 
 local sNewParamsArray
 local sScriptArray
+local sObjectHandlersArray
 
 command activateGLX2se
    put "code storage" into kCodeField
@@ -179,7 +206,11 @@ private command refactorMenuPick pWhich
    local tSelectedText
    local tSelectedChunk
    
-   put the short name of this stack into main -- bn's patch
+   delete variable sObjectHandlersArray
+   delete variable sScriptArray
+   delete variable sNewParamsArray
+   
+   put the short name of this stack into main -- bn's patch for multiple editors
    set the itemDelimiter to "|"
    if item 1 of pWhich is "Refactoring" then
       lock screen
@@ -399,11 +430,7 @@ end ConvertLiteralToConstant
 */
 private command ConvertGlobalTo pVariableName, pType
    local tType
-   local tLineToInsert
-   local tStartLineNumber, tEndLineNumber
-   local tInsertionPoint
    local tScript, tGlobalScript
-   local tLinePos, tOffset
    local tObject
    
    if pType is empty then
@@ -751,7 +778,6 @@ private command ChangeSignature pContextText
    local tEndLineNumber
    local tLine
    local tHandlerName, tNewHandlerName
-   local tParameters
    local tParamsArray
    local tNewSignature
    local tType
@@ -901,7 +927,6 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
    local tNewNumParameters
    local tOldNumParameters
    local tParams
-   local x
    local tEndOfOldParameters -- note: this will be 0 if there are no original parameters
    
    set the itemDelimiter to comma
@@ -1314,7 +1339,7 @@ end chop
 *  AddDocsAtLine
 */
 private command AddDocsAtLine pSelectedLine
-   local tScript, tFilteredScript, tGeneratedTest
+   local tScript, tGeneratedTest
    local tLineNumber
    local tFunctionLine
    local tFunctionType, tHandlerName
@@ -1524,7 +1549,6 @@ end ShouldSkipScript?
 * RenameVariable
 */
 private command RenameVariable pVariableName
-   local tList
    local tRenameType
    local tNewName
    local tScript, tTestForLocal
@@ -1645,7 +1669,7 @@ private command CopyOrMove pMode
    local tStartLineNumber, tEndLineNumber
    local tScript, tHandler, tDestinationScript
    local tDestination
-   local tObjectID, tControlsList, tControlNamesList
+   local tObjectID, tControlsList
    
    put CurrentObject() into tObjectID
    put ContextForCurrentLine() into tInsertionPoint
@@ -1815,8 +1839,10 @@ end insertAtStartOfScript
 private function ContextForCurrentLine
    local tTarget
    
+   lock screen
    focus on field kCodeField of group "Editor" of stack main
    put word 2 of the selectedline into tTarget
+   unlock screen
    return ScriptContextForLineNumber(tTarget)
 end ContextForCurrentLine
 
@@ -1844,24 +1870,21 @@ private function ScriptContextForLineNumber pSelectedLine
       end if
    end repeat
    -- otherwise return the entire script scope
-   return "X Script 0 -1"
+   return "X Script 1 -1"
 end ScriptContextForLineNumber
 
 private function extractHandlerTextAtLine pLineNumber, pScript
    local tInsertionPoint, tStartLineNumber, tEndLineNumber
    local tHandler
    
+   set the itemdelimiter to comma
    put ScriptContextForLineNumber(pLineNumber) into tInsertionPoint
-   put word 3 of tInsertionPoint into tStartLineNumber
-   put word 4 of tInsertionPoint into tEndLineNumber
-   put line tStartLineNumber+1 to tEndLineNumber of pScript into tHandler
-   if tStartLineNumber is 0 then
-      breakpoint
-   end if
+   replace space with comma in tInsertionPoint
+   put item 3 of tInsertionPoint into tStartLineNumber
+   put item 4 of tInsertionPoint into tEndLineNumber
+   put line tStartLineNumber to tEndLineNumber of pScript into tHandler
    return tHandler
 end extractHandlerTextAtLine
-
-local sObjectHandlersArray
 
 function availableHandlersOf pObject
    -- revAvailableHandlers is wrong if there are unapplied edits
@@ -1870,10 +1893,12 @@ function availableHandlersOf pObject
    local tHandlerList
    local tEditors, tTargetObjects
    local tScript, tHandlers
-   local tStartLine, tEndLine, tHandler
+   local tHandler
    local tHandlerArray
    local tHandlerType
+   local tPos
    
+   -- see if we've already cached this list
    if sObjectHandlersArray[pObject] is not empty then
       return sObjectHandlersArray[pObject]
    end if
@@ -1888,9 +1913,9 @@ function availableHandlersOf pObject
          removeCommentsFrom tHandlers
          replace "command " with "on " in tHandlers
          
-         local tHandlerStarts, tLastLineNumber, tPos
+         local tHandlerStarts, tLastLineNumber
          -- get 'before' and 'after' handlers
-         filter tHandlers with "[ba][ef][ft]*" into tHandlerStarts
+         filter tHandlers with regex pattern "(?i)^[ba][ef][ft].*" into tHandlerStarts
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
             put word 2 of tLine into tHandler
@@ -1910,13 +1935,16 @@ function availableHandlersOf pObject
             put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
          end repeat
          
-         filter tHandlers with regex pattern "function .*" into tHandlerStarts
+         filter tHandlers with regex pattern "(?i)^(private )?function .*" into tHandlerStarts
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
-               put word 3 of tLine into tHandler
-            else
-               put word 2 of tLine into tHandler
+               delete word 1 of tLine
+            end if
+            put word 2 of tLine into tHandler
+            put offset("(", tHandler) into tPos
+            if tPos > 0 then
+               delete char tPos to -1 of tHandler
             end if
             put "F" into tHandlerType
             put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
@@ -1927,18 +1955,17 @@ function availableHandlersOf pObject
             put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
          end repeat
          
-         -- find 'private' 'command' and 'on' handlers
-         filter tHandlers with "[pco][ron][im ]*" into tHandlerStarts
+         -- find 'private', 'command' and 'on' handlers
+         filter tHandlers with regex pattern "(?i)^[pcogs][rone][im t].*" into tHandlerStarts
          -- we already processed functions
          filter tHandlerStarts without "* function *"
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
-               put word 3 of tLine into tHandler
-            else
-               put word 2 of tLine into tHandler
+               delete word 1 of tLine
             end if
-            put "M" into tHandlerType
+            put word 2 of tLine into tHandler
+            put simpleTypeFromVerboseType(word 1 of tLine) into tHandlerType
             put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
             put tPos + tLastLineNumber into tLastLineNumber
             put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
@@ -1973,7 +2000,7 @@ end availableHandlersOf
 * pVariableName, the handler we're about to operate on
 */
 private function WhereUsed pVariableName, pType, pReportLocally
-   local tScript, tTestScript
+   local tScript
    local tObjectList
    local tNumControls
    local tObjectID
@@ -2046,7 +2073,7 @@ private function scriptObjectsOfObject pObjectID
       end repeat
       filter tMainstackList without empty -- bn
       
-      local tStackID, tCardID, tControlID
+      local tStackID, tCardID
       put empty into tObjectArray
       repeat for each line tStack in tMainstackList
          -- list the stack itself
@@ -2089,7 +2116,6 @@ end scriptObjectsOfObject
 * Only called from WhereUsed
 */
 private function TestScriptForUse pHandlerName, pScript
-   local tTestScript
    local tIsUsed?
    local tWordOffset
    
@@ -2118,9 +2144,7 @@ end TestScriptForUse
 */
 private command SetScript pScript, pObject
    local tSelectionPoint
-   local tVScroll
    local tSavedDefaultStack
-   local tObjectBeingEdited
    
    lock screen
    put the defaultstack into tSavedDefaultStack
@@ -2165,24 +2189,60 @@ private function FindDuplicateHandlersIn pScript
    local tObject
    local tHandlerList
    local tPreviousLine
+   local tType
    
    put CurrentObject() into tObject
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tLine in tHandlerList
-      if char 1 of tLine is "P" then
-         delete char 1 of tLine
-      end if
+      --      if char 1 of tLine is "P" then
+      --         delete char 1 of tLine
+      --      end if
       if word 1 to 2 of tLine is word 1 to 2 of tPreviousLine then
-         if word 3 of tPreviousLine & tab & "duplicate handler" && word 2 of tPreviousLine is not in tDuplicates then
-            put word 3 of tPreviousLine & tab & "duplicate handler" && word 2 of tPreviousLine & cr after tDuplicates
+         put verboseTypeFromSimpleType(word 1 of tLine) into tType
+         if word 3 of tPreviousLine & tab & "duplicate" && tType && word 2 of tPreviousLine is not in tDuplicates then
+            put word 3 of tPreviousLine & tab & "duplicate" && tType && word 2 of tPreviousLine & cr after tDuplicates
          end if
-         put word 3 of tLine & tab & "duplicate handler" && word 2 of tLine & cr after tDuplicates
+         put word 3 of tLine & tab & "duplicate" && tType && word 2 of tLine & cr after tDuplicates
       end if
       put tLine into tPreviousLine
    end repeat
    return tDuplicates
 end FindDuplicateHandlersIn
 
+private function verboseTypeFromSimpleType pType
+   local tVerboseType
+   
+   switch pType
+      case "G"
+         put "getProp handler" into tVerboseType
+         break
+      case "S"
+         put "setProp handler" into tVerboseType
+         break
+      case "F"
+         put "function" into tVerboseType
+         break
+      default
+         put "command" into tVerboseType
+   end switch
+   return tVerboseType
+end verboseTypeFromSimpleType
+
+private function simpleTypeFromVerboseType pType
+   local tSimpleType
+   
+   switch pType
+      case "getProp"
+         put "G" into tSimpleType
+         break
+      case "setProp"
+         put "S" into tSimpleType
+         break
+      default
+         put "M" into tSimpleType
+   end switch
+   return tSimpleType
+end simpleTypeFromVerboseType
 /**
 -- in this script:
 -- find unused globals
@@ -2194,7 +2254,7 @@ end FindDuplicateHandlersIn
 -- find unused non-private handlers
 */
 private command FindOrphans pObject
-   local tScript, tFilteredScript
+   local tScript
    local tOrphanList, tUndeclaredList
    local tLineNumber
    local tPutLine
@@ -2221,14 +2281,18 @@ private command FindOrphans pObject
    repeat for each line tLine in tScript
       switch token 1 of tLine
          case "put"
+            removeCommentsFrom tLine
+            local tLineAdd
+            put tLineNumber into tLineAdd
+            repeat while char -1 of word -1 of tLine is "\"
+               add 1 to tLineAdd
+               put line tLineAdd of tScript into word -1 of tLine
+            end repeat
             filter tLine with "* [abi][fen][tf][eo][r ]*" into tPutLine
             if tPutLine is not empty then
                if token -1 of tLine is not among the items of "msg,message" then
                   break
                end if
-            end if
-            if char -1 of tLine is "\" then
-               break
             end if
             -- just fall through here
          case "breakpoint"
@@ -2275,10 +2339,9 @@ end displayOrphans
 
 private function listUndeclaredVariablesIn pScript
    local tUndeclared, tVariable
-   local tTestScript, tGlobals, tLocals
+   local tGlobals, tLocals
    local tLineNumber
    local tCurrentHandler
-   local tHandlerList
    local tVariables
    
    lock screen
@@ -2360,7 +2423,6 @@ end listUndeclaredVariablesIn
 private command removeCommentsFrom @pText
    local tStart, tEnd, tText, tFound
    local x, y
-   local tSavedItemDelimiter
    
    removeQuotesFrom pText
    
@@ -2422,7 +2484,6 @@ end removeQuotesFrom
 private function listOrphansOfType pType, pScript
    local tOrphanList
    local tFilteredScript, tConstantList
-   local tLineNumber
    
    -- look for declarations
    put filteredScript(pType && "*", pScript) into tFilteredScript
@@ -2489,6 +2550,12 @@ private function globalOrphansOf pObject
             if char 2 of tHandlerDetails is "F" then
                break
             end if
+         case "G"
+            put "getProp handler" into tType
+            break
+         case "S"
+            put "setProp handler" into tType
+            break
          case "M"
             put "command" into tType
             break
@@ -2623,8 +2690,6 @@ end Undo.Retrieve
 * Store an element into the sUndoPointArray
 */
 private command Undo.Store pObject, pCount, pValue
-   local tData
-   
    set the itemdelimiter to comma
    put pValue into sUndoPointArray[pObject]["data"][pCount]
    if pCount is among the items of "count,save" then
@@ -2788,7 +2853,6 @@ private command DoRedo pObject, pFunc
 end DoRedo
 
 private command Undo.RestoreScript pObject, tCount, pScript
-   local tScroll
    local tSelection
    
    StoreScrollsOfCard
