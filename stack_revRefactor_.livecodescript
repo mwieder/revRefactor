@@ -103,10 +103,14 @@ Script "stack_revRefactor_"
 2019.05.14 mdw
 * removed some unused local variables
 * removed unused parameters from AddDocsAtLine, AddTestAtLine, ChangeSignature, scriptObjectsOfObject, CurrentObject
+* unused parameter list is now sorted numerically
 */
 
 /*
 * Known issues:
+
+removeCommentsFrom strips variable usage from merge strings.
+
 * If the command name and variable are the same, the variable is flagged as being used.
 * obviously it's not a good coding style, but still...
 command hello
@@ -127,6 +131,7 @@ local kCodeField = "Script"
 local main = "revNewScriptEditor 1"
 
 local sBreadCrumbs
+local sTime # used for timing handlers here
 
 constant kNotImplemented = "Not yet implemented. Coming Real Soon Now"
 constant kThisScript = "This script only"
@@ -1894,18 +1899,16 @@ end ScriptContextForLineNumber
 
 private function extractHandlerTextAtLine pLineNumber, pScript
    local tInsertionPoint, tStartLineNumber, tEndLineNumber
-   local tHandler
    
    set the itemdelimiter to comma
    put ScriptContextForLineNumber(pLineNumber) into tInsertionPoint
    replace space with comma in tInsertionPoint
    put item 3 of tInsertionPoint into tStartLineNumber
    put item 4 of tInsertionPoint into tEndLineNumber
-   put line tStartLineNumber to tEndLineNumber of pScript into tHandler
-   return tHandler
+   return line tStartLineNumber to tEndLineNumber of pScript
 end extractHandlerTextAtLine
 
-function availableHandlersOf pObject
+private function availableHandlersOf pObject
    -- revAvailableHandlers is wrong if there are unapplied edits
    -- and doesn't find duplicate handlers
    -- so we have to roll our own
@@ -2143,9 +2146,6 @@ private function TestScriptForUse pHandlerName, pType, pScript
    if pScript is not empty then
       filter pScript without "end*"
       
-      if quote is in pScript then
-         removeQuotesFrom pScript
-      end if
       replace "command " with "on " in pScript
       filter pScript with " *" & pHandlerName & "*"
       filter pScript without "\blocal\b *" # handle the handler name and local var being the same
@@ -2280,6 +2280,7 @@ private command FindOrphans pObject
    local tLineNumber
    local tPutLine
    
+   logStartTime
    lock screen
    if pObject is empty then
       put CurrentObject() into pObject
@@ -2329,8 +2330,17 @@ private command FindOrphans pObject
    
    displayUndeclaredVars tUndeclared
    displayOrphans tOrphanList, tUndeclaredList is not empty
+   logTime
    unlock screen
 end FindOrphans
+
+private command logStartTime
+   put the milliseconds into sTime
+end logStartTime
+
+private command logTime
+   put the milliseconds - sTime & cr after msg
+end logTime
 
 private command displayUndeclaredVars pUndeclaredList
    -- see if there are any present then
@@ -2446,59 +2456,47 @@ private function listUndeclaredVariablesIn pScript
 end listUndeclaredVariablesIn
 
 private command removeCommentsFrom @pText
-   local tHowManyLines
-   local tSubText
-   local tCRs
-   
    removeQuotesFrom pText
-   
-   -- remove block comments
-   
-   -- remove quoted literal slash asterisk and quoted asterisk slash
-   -- restore them later
-   --put quote & "/*" & quote into tQuoteSlashStart
-   --put quote & "*/" & quote into tQuoteSlashEnd
-   
-   --replace tQuoteSlashStart with "slashAsterix" in pText
-   --replace tQuoteSlashEnd with "obelixSlash" in pText
-   set the lineDelimiter to "/*"
-   set the itemDelimiter to "*/"
-   put the number of lines of pText into tHowManyLines
-   if tHowManyLines > 1 then
-      repeat with i = 2 to tHowManyLines
-         put item 1 of line i of pText into tSubText
-         
-         -- replace slash comments with empty lines
-         --repeat for each char aChar in tSubText
-         repeat for each char aChar in item 1 of line i of pText
-            if aChar is cr then
-               put cr after tCRs
-            end if
-         end repeat
-         put tCRs into item 1 of line i of pText
-         put "" into tCRs
-      end repeat
-      replace "/*" with empty in pText
-      replace "*/" with empty in pText
-      --replace "slashAsterix" with tQuoteSlashStart in pText
-      --replace "obelixSlash" with tQuoteSlashEnd in pText
-   end if
+   removeBlockCommentsFrom pText
    
    -- remove single-line comments
    put replacetext(pText, "#.*", " ") into pText
-   put replacetext(pText, "--.*", " ") into pText
-   put replacetext(pText, "//.*", " ") into pText
+   put replacetext(pText, "[/-][/-].*", " ") into pText
 end removeCommentsFrom
 
+private command removeBlockCommentsFrom @pText
+   local tCRs
+   
+   set the lineDelimiter to "/*"
+   set the itemDelimiter to "*/"
+   if the number of lines of pText > 1 then
+      
+      local i
+      put 1 into i
+      repeat for each line tLine in pText
+         if i > 1 then
+            repeat for each char aChar in item 1 of tLine
+               if aChar is cr then
+                  put cr after tCRs
+               end if
+            end repeat
+            put tCRs into item 1 of tLine
+            put tLine into line i of pText
+            put "" into tCRs
+         end if
+         add 1 to i
+      end repeat
+      replace "/*" with empty in pText
+      replace "*/" with empty in pText
+   end if
+end removeBlockCommentsFrom
+
 private command removeQuotesFrom @pText
-   --local tSavedItemDelimiter
    local tNoItems
    
-   --put the itemDelimiter into tSavedItemDelimiter
    set the itemDelimiter to quote
    put the number of items in pText into tNoItems
    if tNoItems > 1 then
-      
       local i
       put 0 into i
       repeat for each item tItem in pText
@@ -2507,9 +2505,7 @@ private command removeQuotesFrom @pText
          end if
          add 1 to i
       end repeat
-      
    end if
-   --set the itemDelimiter to tSavedItemDelimiter
 end removeQuotesFrom
 
 /**
@@ -2563,7 +2559,7 @@ end listOrphansOfType
 
 private function listParamsIn pObject
    local tOrphanList
-   local tHandlerList
+   local tHandlerList, tHandler
    local tLineNumber
    local tScript
    local tDeclaration
@@ -2578,18 +2574,21 @@ private function listParamsIn pObject
       if "private" is word 1 of tDeclaration then
          delete word 1 of tDeclaration
       end if
+      put word 2 of tDeclaration into tHandler
       delete word 1 to 2 of tDeclaration
       replace comma with empty in tDeclaration
       replace "@" with empty in tDeclaration
       if tDeclaration is not empty then
          put extractHandlerTextAtLine(tLineNumber, tScript) into tScope
+         removeQuotesFrom tScope
          repeat for each word tParameter in tDeclaration
             if not TestScriptForUse(tParameter, "param", tScope) then
-               put tLineNumber & tab & "unused parameter" && tParameter & cr after tOrphanList
+               put tLineNumber & tab & "unused parameter" && tParameter && "in" && tHandler & cr after tOrphanList
             end if
          end repeat
       end if
    end repeat
+   sort numeric tOrphanList
    return tOrphanList
 end listParamsIn
 
