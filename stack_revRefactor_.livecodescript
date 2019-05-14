@@ -104,6 +104,7 @@ Script "stack_revRefactor_"
 * removed some unused local variables
 * removed unused parameters from AddDocsAtLine, AddTestAtLine, ChangeSignature, scriptObjectsOfObject, CurrentObject
 * unused parameter list is now sorted numerically
+* increased speed of blockComments and quotes removal significantly
 */
 
 /*
@@ -2264,6 +2265,7 @@ private function simpleTypeFromVerboseType pType
    end switch
    return tSimpleType
 end simpleTypeFromVerboseType
+
 /**
 -- in this script:
 -- find unused globals
@@ -2280,7 +2282,7 @@ private command FindOrphans pObject
    local tLineNumber
    local tPutLine
    
-   logStartTime
+   --logStartTime
    lock screen
    if pObject is empty then
       put CurrentObject() into pObject
@@ -2330,17 +2332,9 @@ private command FindOrphans pObject
    
    displayUndeclaredVars tUndeclared
    displayOrphans tOrphanList, tUndeclaredList is not empty
-   logTime
+   --logTime
    unlock screen
 end FindOrphans
-
-private command logStartTime
-   put the milliseconds into sTime
-end logStartTime
-
-private command logTime
-   put the milliseconds - sTime & cr after msg
-end logTime
 
 private command displayUndeclaredVars pUndeclaredList
    -- see if there are any present then
@@ -2460,8 +2454,10 @@ private command removeCommentsFrom @pText
    removeBlockCommentsFrom pText
    
    -- remove single-line comments
-   put replacetext(pText, "#.*", " ") into pText
-   put replacetext(pText, "[/-][/-].*", " ") into pText
+   replace "#*" with empty in pText
+   replace "//*" with empty in pText
+   replace "--*" with empty in pText
+   --put replacetext(pText, "[/-][/-].*", " ") into pText
 end removeCommentsFrom
 
 private command removeBlockCommentsFrom @pText
@@ -2959,7 +2955,15 @@ command assertIsTrue pExpression
    return pExpression is not false
 end assertIsTrue
 
-
 on localNotificationReceived pMessage
    
 end localNotificationReceived
+
+private command logStartTime
+   put the milliseconds into sTime
+end logStartTime
+
+private command logTime
+   put the milliseconds - sTime & cr after msg
+end logTime
+
