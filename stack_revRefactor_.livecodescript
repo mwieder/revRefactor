@@ -100,6 +100,9 @@ Script "stack_revRefactor_"
 * added unused parameters to FindOrphans list
 * also catching @parameters properly now
 * improved speed of removing block comments (bn's function)
+2019.05.14 mdw
+* removed some unused local variables
+* removed unused parameters from AddDocsAtLine, AddTestAtLine, ChangeSignature, scriptObjectsOfObject, CurrentObject
 */
 
 /*
@@ -249,7 +252,7 @@ private command refactorMenuPick pWhich
                ConvertLiteralToConstant tSelectedText
                break
             case "Change Signature"
-               ChangeSignature tSelectedText
+               ChangeSignature --tSelectedText
                break
             case "Convert Global to"
                ConvertGlobalTo tSelectedText, item 3 of pWhich
@@ -279,10 +282,10 @@ private command refactorMenuPick pWhich
                renameVariable tSelectedText
                break
             case "Add Test"
-               AddTestAtLine the selectedline
+               AddTestAtLine --the selectedline
                break
             case "Add Documentation"
-               AddDocsAtLine the selectedline
+               AddDocsAtLine --the selectedline
                break
             case "Find Orphan Code"
                FindOrphans
@@ -784,7 +787,7 @@ end ConvertVariableToProperty
 * ChangeSignature
 * change the order and/or number of parameters
 */
-private command ChangeSignature pContextText
+private command ChangeSignature --pContextText
    local tList
    local tScript
    local tInsertionPoint
@@ -1156,7 +1159,7 @@ constant kLineStarters = "private,on,command,function,after,before,getProp,setPr
 * Add a test for the given handler
 * in a file in the same directory as the stack being edited
 */
-private command AddTestAtLine pSelectedLine
+private command AddTestAtLine --pSelectedLine
    local tScript, tFilteredScript
    local tLineNumber, tObjectNumber
    local tFunctionLine
@@ -1168,7 +1171,7 @@ private command AddTestAtLine pSelectedLine
    local tTestContents, tFileContents
    local tNextTestNumber, tNextObjectNumber
    
-   put CurrentObject(the currentcard of this stack) into tPathName
+   put CurrentObject() into tPathName
    put the long id of tPathName into tPathName
    -- get just the stack name
    put "stack" && word -1 of tPathName into tFileName
@@ -1323,7 +1326,7 @@ private function GenerateTestFor pType, pHandler, pParameters
    end if
    replace "$HANDLER" with pHandler in tTestScript
    replace "$PARAMETERS" with pParameters in tTestScript
-   put CurrentObject(the currentcard of this stack) into tObject
+   put CurrentObject() into tObject
    put word -1 of tObject into tStackName
    put q(word 1 to -2 of tObject) && "&& q(" & tStackName & ")" into tObject
    replace "$OBJECT" with tObject in tTestScript
@@ -1352,7 +1355,7 @@ end chop
 /**
 *  AddDocsAtLine
 */
-private command AddDocsAtLine pSelectedLine
+private command AddDocsAtLine --pSelectedLine
    local tScript, tGeneratedTest
    local tLineNumber
    local tFunctionLine
@@ -1683,7 +1686,8 @@ private command CopyOrMove pMode
    local tStartLineNumber, tEndLineNumber
    local tScript, tHandler, tDestinationScript
    local tDestination
-   local tObjectID, tControlsList
+   local tObjectID
+   local tControlsList
    
    put CurrentObject() into tObjectID
    put ContextForCurrentLine() into tInsertionPoint
@@ -1693,7 +1697,8 @@ private command CopyOrMove pMode
    -- get the list of scripts being edited
    -- convert that into a list of mainstacks
    -- list the substacks, cards, and objects
-   put scriptObjectsOfObject(tObjectID) into tControlsList
+   --put scriptObjectsOfObject(tObjectID) into tControlsList
+   put scriptObjectsOfObject() into tControlsList
    put tControlsList into button "btnObjects" of stack "Object Selector" of me
    put empty into tDestination
    modal stack "Object Selector" of me
@@ -2025,7 +2030,7 @@ private function WhereUsed pVariableName, pType, pReportLocally
    
    -- get list of objects and their scripts
    -- get the long id of the object we're working on
-   put CurrentObject(the currentcard of stack main) into tObjectID
+   put CurrentObject() into tObjectID
    -- get the stack metadata
    -- get the list of stacks and substacks
    try
@@ -2062,7 +2067,7 @@ private function WhereUsed pVariableName, pType, pReportLocally
    return tObjectList
 end WhereUsed
 
-private function scriptObjectsOfObject pObjectID
+private function scriptObjectsOfObject --pObjectID
    local tMainstack
    local tTargetObjects
    local tCards
@@ -2138,10 +2143,14 @@ private function TestScriptForUse pHandlerName, pType, pScript
    if pScript is not empty then
       filter pScript without "end*"
       
+      if quote is in pScript then
+         removeQuotesFrom pScript
+      end if
       replace "command " with "on " in pScript
       filter pScript with " *" & pHandlerName & "*"
-      filter pScript without "*local *" # handle the handler name and local var being the same
-      replace "(" with space in pScript
+      filter pScript without "\blocal\b *" # handle the handler name and local var being the same
+      replace "+" with space in pScript
+      put replaceText(pScript, "[\[\](),-]", space) into pScript
       if pScript is not empty then
          put wordoffset(pHandlerName, pScript) into tWordOffset
          if tWordOffset is not 0 then
@@ -2199,7 +2208,7 @@ private command setSEDirtyFlagFor pObject
    dispatch "textReplace" to group "Editor" of stack main with 1, "", "", pObject
 end setSEDirtyFlagFor
 
-private function FindDuplicateHandlersIn pScript
+private function duplicateHandlers --pScript
    local tDuplicates
    local tObject
    local tHandlerList
@@ -2219,7 +2228,7 @@ private function FindDuplicateHandlersIn pScript
       put tLine into tPreviousLine
    end repeat
    return tDuplicates
-end FindDuplicateHandlersIn
+end duplicateHandlers
 
 private function verboseTypeFromSimpleType pType
    local tVerboseType
@@ -2316,7 +2325,7 @@ private command FindOrphans pObject
       add 1 to tLineNumber
    end repeat
    
-   put FindDuplicateHandlersIn(tScript) after tOrphanList
+   put duplicateHandlers() after tOrphanList
    
    displayUndeclaredVars tUndeclared
    displayOrphans tOrphanList, tUndeclaredList is not empty
@@ -2437,12 +2446,9 @@ private function listUndeclaredVariablesIn pScript
 end listUndeclaredVariablesIn
 
 private command removeCommentsFrom @pText
-   local tStart, tEnd, tText, tFound
-   local x, y
    local tHowManyLines
    local tSubText
    local tCRs
-   local tQuoteSlashStart, tQuoteSlashEnd
    
    removeQuotesFrom pText
    
@@ -2485,10 +2491,10 @@ private command removeCommentsFrom @pText
 end removeCommentsFrom
 
 private command removeQuotesFrom @pText
-   local tSavedItemDelimiter
+   --local tSavedItemDelimiter
    local tNoItems
    
-   put the itemDelimiter into tSavedItemDelimiter
+   --put the itemDelimiter into tSavedItemDelimiter
    set the itemDelimiter to quote
    put the number of items in pText into tNoItems
    if tNoItems > 1 then
@@ -2503,7 +2509,7 @@ private command removeQuotesFrom @pText
       end repeat
       
    end if
-   set the itemDelimiter to tSavedItemDelimiter
+   --set the itemDelimiter to tSavedItemDelimiter
 end removeQuotesFrom
 
 /**
@@ -2824,7 +2830,7 @@ end Undo.SetSavePointer
 private command Undo.Push pObject
    local tCount
    
-   put CurrentObject(pObject) into pObject
+   put CurrentObject() into pObject
    put the long id of pObject into pObject
    put Undo.Pointer(pObject, false)+1 into tCount
    Undo.Store pObject, tCount, compress(scriptFromEditor())
@@ -2845,7 +2851,7 @@ private command Undo.Pop pObject, pFunc
    
    lock screen
    -- retrieve the current pointer
-   put CurrentObject(pObject) into pObject
+   put CurrentObject() into pObject
    put the long id of pObject into pObject
    put Undo.Pointer(pObject, true) into tCount
    if tCount > 0 then
@@ -2897,7 +2903,7 @@ private command DoRedo pObject, pFunc
    put false into tSuccess?
    lock screen
    -- increment the stack pointer
-   put CurrentObject(pObject) into pObject
+   put CurrentObject() into pObject
    put Undo.Pointer(pObject, false)+2 into tCount
    put Undo.Retrieve(pObject, tCount) into tSavedUndo
    if tSavedUndo is empty then
@@ -2932,7 +2938,7 @@ private command Undo.RestoreScript pObject, tCount, pScript
    end if
 end Undo.RestoreScript
 
-private function CurrentObject pCard
+private function CurrentObject --pCard
    local tObject
    
    if glx2IsInUse() then
