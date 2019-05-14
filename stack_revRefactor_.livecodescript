@@ -6,6 +6,14 @@ Script "stack_revRefactor_"
 */
 
 
+Script "stack_revRefactor_"
+
+/*
+# Name: stack "revRefactor"
+# ID: stack "revRefactor"
+*/
+
+
 /**
 * LiveCode Refactoring support
 *
@@ -86,11 +94,17 @@ Script "stack_revRefactor_"
 *
 * lots of tweaking to handle backslashes
 * and ensure that script-local constants aren't flagged as unused
+2019.05.13 mdw
+* addedd a missing removeCommentsFrom() call to FindOrphans
+* group duplicate handlers by type rather than sorting by line number
+* added unused parameters to FindOrphans list
+* also catching @parameters properly now
+* improved speed of removing block comments (bn's function)
 */
 
 /*
 * Known issues:
-* this format respects both the command name and variable as being used.
+* If the command name and variable are the same, the variable is flagged as being used.
 * obviously it's not a good coding style, but still...
 command hello
    local hello
@@ -2027,7 +2041,7 @@ private function WhereUsed pVariableName, pType, pReportLocally
       if the name of stack tStack is the name of tObjectID then
          if pReportLocally is true then
             put the script of stack tStack into tScript
-            if TestScriptForUse(pVariableName, tScript) then
+            if TestScriptForUse(pVariableName, pType, tScript) then
                put the long id of stack tStack & cr after tObjectList
             end if
          end if
@@ -2040,7 +2054,7 @@ private function WhereUsed pVariableName, pType, pReportLocally
             next repeat
          end if
          put the script of control x of stack tStack into tScript
-         if TestScriptForUse(pVariableName, tScript) then
+         if TestScriptForUse(pVariableName, pType, tScript) then
             put the long id of control x of stack tStack & cr after tObjectList
          end if
       end repeat --  with x=1 to tNumControls
@@ -2115,7 +2129,7 @@ end scriptObjectsOfObject
 * Return false if there is a private handler with the same name
 * Only called from WhereUsed
 */
-private function TestScriptForUse pHandlerName, pScript
+private function TestScriptForUse pHandlerName, pType, pScript
    local tIsUsed?
    local tWordOffset
    
@@ -2126,6 +2140,7 @@ private function TestScriptForUse pHandlerName, pScript
       
       replace "command " with "on " in pScript
       filter pScript with " *" & pHandlerName & "*"
+      filter pScript without "*local *" # handle the handler name and local var being the same
       replace "(" with space in pScript
       if pScript is not empty then
          put wordoffset(pHandlerName, pScript) into tWordOffset
@@ -2194,9 +2209,6 @@ private function FindDuplicateHandlersIn pScript
    put CurrentObject() into tObject
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tLine in tHandlerList
-      --      if char 1 of tLine is "P" then
-      --         delete char 1 of tLine
-      --      end if
       if word 1 to 2 of tLine is word 1 to 2 of tPreviousLine then
          put verboseTypeFromSimpleType(word 1 of tLine) into tType
          if word 3 of tPreviousLine & tab & "duplicate" && tType && word 2 of tPreviousLine is not in tDuplicates then
@@ -2268,6 +2280,7 @@ private command FindOrphans pObject
    put ListOrphansOfType("global", tScript) after tOrphanList
    put ListOrphansOfType("local", tScript) after tOrphanList
    put ListOrphansOfType("constant", tScript) after tOrphanList
+   put listParamsIn(pObject) after tOrphanList
    
    -- do the global thing
    put globalOrphansOf(pObject) after tOrphanList
@@ -2287,6 +2300,7 @@ private command FindOrphans pObject
             repeat while char -1 of word -1 of tLine is "\"
                add 1 to tLineAdd
                put line tLineAdd of tScript into word -1 of tLine
+               removeCommentsFrom tLine
             end repeat
             filter tLine with "* [abi][fen][tf][eo][r ]*" into tPutLine
             if tPutLine is not empty then
@@ -2324,7 +2338,9 @@ end displayUndeclaredVars
 private command displayOrphans pOrphanList, pUndeclaredVarsExist
    if pOrphanList is not empty or pUndeclaredVarsExist then
       lock screen
-      sort numeric pOrphanList
+      -- group by type rather than sorting by line number
+      --sort numeric pOrphanList
+      sort lines of pOrphanList by item 2 of each
       put pOrphanList into field "fldOrphanList" of card "Orphans" of me
       palette me
       set the visible of me to true
@@ -2423,28 +2439,45 @@ end listUndeclaredVariablesIn
 private command removeCommentsFrom @pText
    local tStart, tEnd, tText, tFound
    local x, y
+   local tHowManyLines
+   local tSubText
+   local tCRs
+   local tQuoteSlashStart, tQuoteSlashEnd
    
    removeQuotesFrom pText
    
-   put true into tFound
-   repeat while tFound is true
-      -- locate block comments
-      put matchchunk(pText, "(?s)(/\*.*?\*/)", tStart, tEnd) into tFound
-      if tFound then
-         -- get the block comment
-         put char tStart to tEnd of pText into tText
-         put 1 into y
-         -- replace the comment
-         put " " into char tStart to tEnd of pText
-         -- now restore the line count
-         repeat with x = tStart to tEnd
-            if char y of tText is cr then
-               put cr after char tStart of pText
+   -- remove block comments
+   
+   -- remove quoted literal slash asterisk and quoted asterisk slash
+   -- restore them later
+   --put quote & "/*" & quote into tQuoteSlashStart
+   --put quote & "*/" & quote into tQuoteSlashEnd
+   
+   --replace tQuoteSlashStart with "slashAsterix" in pText
+   --replace tQuoteSlashEnd with "obelixSlash" in pText
+   set the lineDelimiter to "/*"
+   set the itemDelimiter to "*/"
+   put the number of lines of pText into tHowManyLines
+   if tHowManyLines > 1 then
+      repeat with i = 2 to tHowManyLines
+         put item 1 of line i of pText into tSubText
+         
+         -- replace slash comments with empty lines
+         --repeat for each char aChar in tSubText
+         repeat for each char aChar in item 1 of line i of pText
+            if aChar is cr then
+               put cr after tCRs
             end if
-            add 1 to y
          end repeat
-      end if
-   end repeat
+         put tCRs into item 1 of line i of pText
+         put "" into tCRs
+      end repeat
+      replace "/*" with empty in pText
+      replace "*/" with empty in pText
+      --replace "slashAsterix" with tQuoteSlashStart in pText
+      --replace "obelixSlash" with tQuoteSlashEnd in pText
+   end if
+   
    -- remove single-line comments
    put replacetext(pText, "#.*", " ") into pText
    put replacetext(pText, "--.*", " ") into pText
@@ -2517,9 +2550,42 @@ private function listOrphansOfType pType, pScript
          end repeat
       end repeat
    end if
+   
    sort tOrphanList
    return tOrphanList
 end listOrphansOfType
+
+private function listParamsIn pObject
+   local tOrphanList
+   local tHandlerList
+   local tLineNumber
+   local tScript
+   local tDeclaration
+   local tParameter
+   local tScope
+   
+   put availableHandlersOf(pObject) into tHandlerList
+   put scriptFromEditor() into tScript
+   repeat for each line tHandlerDetails in tHandlerList
+      put word 3 of tHandlerDetails into tLineNumber
+      put token 1 to -1 of line tLineNumber of tScript into tDeclaration
+      if "private" is word 1 of tDeclaration then
+         delete word 1 of tDeclaration
+      end if
+      delete word 1 to 2 of tDeclaration
+      replace comma with empty in tDeclaration
+      replace "@" with empty in tDeclaration
+      if tDeclaration is not empty then
+         put extractHandlerTextAtLine(tLineNumber, tScript) into tScope
+         repeat for each word tParameter in tDeclaration
+            if not TestScriptForUse(tParameter, "param", tScope) then
+               put tLineNumber & tab & "unused parameter" && tParameter & cr after tOrphanList
+            end if
+         end repeat
+      end if
+   end repeat
+   return tOrphanList
+end listParamsIn
 
 /**
 * globalOrphansOf
@@ -2887,3 +2953,8 @@ end glx2IsInUse
 command assertIsTrue pExpression
    return pExpression is not false
 end assertIsTrue
+
+
+on localNotificationReceived pMessage
+   
+end localNotificationReceived
