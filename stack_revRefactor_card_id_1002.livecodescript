@@ -18,7 +18,7 @@ on preOpenStack
    insert the script of this stack into front
    dispatch "ideSubscribe" to me with "ideEditScript"
    
-   -- installer (in case PowerTools isn't already in the user plugins folder)
+   -- installer (in case the Refactor plugin isn't already in the user plugins folder)
    try
       if there is a stack "revmenubar" then
          put revEnvironmentUserPluginsPath() into tPath

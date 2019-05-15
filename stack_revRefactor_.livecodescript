@@ -2585,8 +2585,8 @@ private function listParamsIn pObject
       end if
       put word 2 of tDeclaration into tHandler
       delete word 1 to 2 of tDeclaration
-      replace comma with empty in tDeclaration
-      replace "@" with empty in tDeclaration
+      replace comma with space in tDeclaration
+      replace "@" with space in tDeclaration
       if tDeclaration is not empty then
          put extractHandlerTextAtLine(tLineNumber, tScript) into tScope
          removeQuotesFrom tScope
@@ -2997,6 +2997,8 @@ end assertIsTrue
 on localNotificationReceived pMessage
    
 end localNotificationReceived
+
+-- timing for debugging handlers
 
 private command logStartTime
    put the milliseconds into sTime

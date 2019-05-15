@@ -78,3 +78,7 @@ command HandleOptions
    ShowOrHide the hilite of button "btnOrphans", "orphan"
    unlock screen
 end HandleOptions
+
+on closeStack
+   
+end closeStack
