@@ -105,6 +105,9 @@ Script "stack_revRefactor_"
 * removed unused parameters from AddDocsAtLine, AddTestAtLine, ChangeSignature, scriptObjectsOfObject, CurrentObject
 * unused parameter list is now sorted numerically
 * increased speed of blockComments and quotes removal significantly
+* DoReplace can now rename handler parameters properly
+* added removeBracketsAndQuotesFrom
+* can now rename variables inside merge strings
 */
 
 /*
@@ -1616,6 +1619,8 @@ private command RenameVariable pVariableName
          put 0 into tLineCount
          
          local tShouldProcessLine?
+         local tLocalScope
+         put removeBracketsInQuotesFrom(tLocalScript) into tLocalScript
          repeat for each line tLine in tLocalScript
             put true into tShouldProcessLine?
             -- end of handler?
@@ -1635,6 +1640,9 @@ private command RenameVariable pVariableName
                   replace q(pVariableName) with numtochar(4) in tLine
                   put DoReplace(tLine, pVariableName, tNewName) into tLine
                   replace numtochar(4) with q(pVariableName) in tLine
+                  replace space & numtochar(6) & space with "[[" in tLine
+                  replace space & numtochar(5) & space with "]]" in tLine
+                  replace numtochar(7) with quote in tLine
                   put tLine into line tLineCount+tStartLineNumber of tScript
                end if
             end if
@@ -1660,13 +1668,15 @@ end RenameVariable
 private function DoReplace pScript, pOutgoingString, pIncomingString
    local tWordNumber
    
+   replace "@" with numtochar(3) & space in pScript
    put 1 into tWordNumber
-   repeat for each word tWord in pScript
+   repeat for each token tWord in pScript
       if tWord is pOutgoingString then
-         put pIncomingString into word tWordNumber of pScript
+         put pIncomingString into token tWordNumber of pScript
       end if
       add 1 to tWordNumber
-   end repeat   
+   end repeat
+   replace numtochar(3) & space with "@" in pScript
    return pScript
 end DoReplace
 
@@ -2564,6 +2574,9 @@ private function listParamsIn pObject
    
    put availableHandlersOf(pObject) into tHandlerList
    put scriptFromEditor() into tScript
+   
+   put removeBracketsInQuotesFrom(tScript) into tScript
+   
    repeat for each line tHandlerDetails in tHandlerList
       put word 3 of tHandlerDetails into tLineNumber
       put token 1 to -1 of line tLineNumber of tScript into tDeclaration
@@ -2587,6 +2600,32 @@ private function listParamsIn pObject
    sort numeric tOrphanList
    return tOrphanList
 end listParamsIn
+
+private function removeBracketsInQuotesFrom pText
+   local tText
+   
+   set the itemDelimiter to quote
+   if the number of items in pText > 1 then
+      
+      local i
+      put 1 into i
+      repeat for each item tItem in pText
+         if i mod 2 = 0 then
+            if tItem contains "]]" then
+               replace "[[" with space & numtochar(6) & space in tItem
+               replace "]]" with space & numtochar(5) & space in tItem
+               put numtochar(7) & tItem & numtochar(7) after tText
+            else
+               put quote & quote after tText
+            end if
+         else
+            put tItem after tText
+         end if
+         add 1 to i
+      end repeat
+   end if
+   return tText
+end removeBracketsInQuotesFrom
 
 /**
 * globalOrphansOf
