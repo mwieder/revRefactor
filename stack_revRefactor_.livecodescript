@@ -131,8 +131,15 @@ end mouseUp
 */
 
 -- some fake constants
+-- because rValues can't be expressions
 local kCodeField = "Script"
 local main = "revNewScriptEditor 1"
+constant kRightBrackets = "]]"
+constant kLeftBrackets = "[["
+local kRightBracketReplacement = "]]"
+local kLeftBracketReplacement = "[["
+local kReference = "@"
+local kQuote = ""
 
 local sBreadCrumbs
 local sTime # used for timing handlers here
@@ -149,12 +156,21 @@ local sObjectHandlersArray
 command activateGLX2se
    put "code storage" into kCodeField
    put "revGLX2 Code" into main
+   fillFakeConstants
 end activateGLX2se
 
 command activateIDEse
    put "Script" into kCodeField
    put "revNewScriptEditor 1" into main
+   fillFakeConstants
 end activateIDEse
+
+private command fillFakeConstants
+   put numtochar(3) & space into kReference
+   put numtochar(5) into kLeftBracketReplacement
+   put numtochar(6) into kRightBracketReplacement
+   put numtochar(7) into kQuote
+end fillFakeConstants
 
 -- getter function to retrieve the name of the current script editor
 function refactorSEName
@@ -1065,7 +1081,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                         -- grab that parameter, and use it
                         put item pNewParamsArray[tOriginalindex] of tTestParameters into tReplacement
                      else
-                        -- delete the numtochar(3) from the beginning
+                        -- delete the kReference from the beginning
                         put pNewParamsArray[tOriginalindex] into tReplacement
                         if char 1 of tReplacement is numtochar(3) then
                            delete char 1 of tReplacement
@@ -1637,17 +1653,17 @@ private command RenameVariable pVariableName
             if tShouldProcessLine? then
                if pVariableName is in tLine then
                   -- ignore string literals
-                  replace q(pVariableName) with numtochar(4) in tLine
+                  replace q(pVariableName) with kQuote in tLine
                   put DoReplace(tLine, pVariableName, tNewName) into tLine
-                  replace numtochar(4) with q(pVariableName) in tLine
-                  replace space & numtochar(6) & space with "[[" in tLine
-                  replace space & numtochar(5) & space with "]]" in tLine
-                  replace numtochar(7) with quote in tLine
+                  replace kQuote with q(pVariableName) in tLine
+                  replace space & kLeftBracketReplacement & space with kLeftBrackets in tLine
+                  replace space & kRightBracketReplacement & space with kRightBrackets in tLine
+                  replace kQuote with quote in tLine
                   put tLine into line tLineCount+tStartLineNumber of tScript
                end if
             end if
             add 1 to tLineCount -- moved per bn
-         end repeat
+         end repeat -- for each line tLine in tLocalScript
          
          SetScript tScript
       end if
@@ -1668,7 +1684,7 @@ end RenameVariable
 private function DoReplace pScript, pOutgoingString, pIncomingString
    local tWordNumber
    
-   replace "@" with numtochar(3) & space in pScript
+   replace "@" with kReference in pScript
    put 1 into tWordNumber
    repeat for each token tWord in pScript
       if tWord is pOutgoingString then
@@ -1676,7 +1692,7 @@ private function DoReplace pScript, pOutgoingString, pIncomingString
       end if
       add 1 to tWordNumber
    end repeat
-   replace numtochar(3) & space with "@" in pScript
+   replace kReference with "@" in pScript
    return pScript
 end DoReplace
 
@@ -2612,11 +2628,12 @@ private function removeBracketsInQuotesFrom pText
       repeat for each item tItem in pText
          if i mod 2 = 0 then
             if tItem contains "]]" then
-               replace "[[" with space & numtochar(6) & space in tItem
-               replace "]]" with space & numtochar(5) & space in tItem
-               put numtochar(7) & tItem & numtochar(7) after tText
+               replace kLeftBrackets with space & kLeftBracketReplacement & space in tItem
+               replace kRightBrackets with space & kRightBracketReplacement & space in tItem
+               put kQuote & tItem & kQuote after tText
             else
-               put quote & quote after tText
+               put quote & tItem & quote after tText
+               --put quote & "removed->" & tItem & "<-removed" & quote after tText
             end if
          else
             put tItem after tText

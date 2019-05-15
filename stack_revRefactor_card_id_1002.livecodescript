@@ -42,7 +42,7 @@ on preOpenStack
       end if
    catch e
    end try
-   
+   activateIDEse
 end preOpenStack
 
 on closeStack
