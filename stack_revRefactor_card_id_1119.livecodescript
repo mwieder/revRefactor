@@ -79,6 +79,6 @@ command HandleOptions
    unlock screen
 end HandleOptions
 
-on closeStack
-   
-end closeStack
+on closeStackRequest
+   hide this stack
+end closeStackRequest

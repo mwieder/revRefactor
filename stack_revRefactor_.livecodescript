@@ -3007,4 +3007,3 @@ end logStartTime
 private command logTime
    put the milliseconds - sTime & cr after msg
 end logTime
-
