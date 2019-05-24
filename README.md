@@ -13,6 +13,8 @@ You don't need all the script files unless you want to submit pull requests.
 ### Rename Handler
 Allows you to rename in just the current script or all scripts in the stack.
 
+If you are renaming or changing the signature of a handler in a script and want to effect this operation across all scripts in the same stack, calls to that handler will be renamed/modified *unless* there is a handler of the same name in that script, in which case you will be notified that the script will not be changed.
+
 ### Rename Variable
 Both Rename Handler and Rename Variable change all uses of the object.
 
@@ -35,6 +37,8 @@ instead of
 Change the parameter list for a command or function.
 For instance, change "myCommand pKey" to "myCommand pKey, pValue"
 Modifying parameters will modify calls to the handler in all scripts in the stack.
+
+If you are renaming or changing the signature of a handler in a script and want to effect this operation across all scripts in the same stack, calls to that handler will be renamed/modified *unless* there is a handler of the same name in that script, in which case you will be notified that the script will not be changed.
 
 ### Safe Delete
 Only deletes the handler/variable if nothing is using it.
@@ -87,8 +91,9 @@ Modifying it will probably cause it to cease functioning.
 Creates a new handler from the selected block of code in the current script.
 
 ### Find Orphan Code
-Displays a list of unused local variables and uncalled handlers.
-Double-click a list item to select it in the script editor.
+Displays a list of unused local variables, unused parameters, uncalled handlers, duplicate handlers, possibly leftover breakpoints and put statements with no destination container. If you do not have strict compilation mode set it will also find undeclared variables to help in debugging.
+Select a list item to select it in the script editor.
+You can use the checkboxes to filter the displayed list by type.
 
 ### Undo Last Refactor
 There's a full undo first-in-last-out stack mechanism for those oops moments.
@@ -100,48 +105,4 @@ After a "Go to definition" call, this gets you back to where you were.
 
 ### Known issues
 
-If you are renaming or changing the signature of a handler in a script and want to effect this operation across all scripts in the same stack, calls to that handler will be renamed/modified *unless* there is a handler of the same name in that script, in which case the script will not be changed.
 
-original script:
-
-    on myHandler pParameter -- declaration
-    end myHandler
-
-        myHandler someVariable -- call to myHandler
-
-------------------------------------------------
-
-script 2:
-
--- the name/parameters change will modify this script
-
-        myHandler someVariable -- call to myHandler in original script
-
-------------------------------------------------
-
-script 3:
-
--- this script will be unmodified
-
-    on myHandler pParameter -- declaration
-    end myHandler
-
-        myHandler someVariable -- call to local myHandler
-
-------------------------------------------------
-
-script 4:
-
--- this script will be unmodified and may not be solvable with static analysis
-
-    on myHandler pParameter -- declaration
-        -- do things
-        dispatch "myHandler" -- this is still an unsolved problem
-        pass myHandler -- this is also still an unsolved problem
-    end myHandler
-
-        myHandler someVariable -- call to local myHandler
-
-I don't presently have a way around this, and haven't decided whether it's a good idea or not.
-
-    
