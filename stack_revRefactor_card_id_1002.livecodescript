@@ -11,11 +11,13 @@ Script "stack_revRefactor_card_id_1002"
 * When this stack is in the user Plugins folder
 * It is set to open when the IDE launches
 * this inserts this script into the backscripts
+2019.05.26 mdw
+* moved stack script into backscripts instead of frontscripts to avoid recursion
 */
 on preOpenStack
    local tPath
    
-   insert the script of this stack into front
+   insert the script of this stack into back
    dispatch "ideSubscribe" to me with "ideEditScript"
    
    -- installer (in case the Refactor plugin isn't already in the user plugins folder)

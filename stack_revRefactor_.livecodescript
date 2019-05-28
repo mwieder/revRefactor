@@ -108,6 +108,10 @@ Script "stack_revRefactor_"
 * DoReplace can now rename handler parameters properly
 * added removeBracketsAndQuotesFrom
 * can now rename variables inside merge strings
+2019.05.26 mdw
+* added more constants for maintainability
+* moved script from frontscripts to backscripts to avoid recursion
+* this resulted in being able to remove the cruft from the revHook message handlers
 */
 
 /*
@@ -179,45 +183,31 @@ end refactorSEName
 
 --> IDE editor menu functions
 
--- https://quality.livecode.com/show_bug.cgi?id=21899
--- this mess could all be fixed if the script editor would check
---  if it is "unhandled"
--- instead of
---  if it is not "handled"
--- instead we have to recurse and unwind the stack frame on exit
-on revHookBuildScriptEditorContextMenu pObjectID, pSelectedText, pText, @pModifiedText
-   -- prevent recursion
-   if param(0) is not in line -2 of the executionContexts then
-      -- only do this the first time around
-      put generateRefactoringSubmenu() after pText
-      put  cr & "Go Back" & cr after line 1 of pText
-      put pText into pModifiedText
-      -- allow chaining dispatch messages without recursion
-      dispatch "revHookBuildScriptEditorContextMenu" with pObjectID, pSelectedText, pText, pModifiedText
-   else
-      -- pass the command after the first iteration
-      pass "revHookBuildScriptEditorContextMenu" with pObjectID, pSelectedText, pText, pModifiedText
-   end if
-   -- return "handled"  whether there's more or not
-   return "handled" for value
+on revHookBuildScriptEditorContextMenu pObjectID, pSelectedText, @pText, @pModifiedText
+   put generateRefactoringSubmenu() after pText
+   put  cr & "Go Back" & cr after line 1 of pText
+   put pText into pModifiedText
+   pass revHookBuildScriptEditorContextMenu
 end revHookBuildScriptEditorContextMenu
 
-on revHookBuildScriptEditorMenu pMenuName, pMenu, @pModifiedMenu
-   -- prevent recursion
-   if param(0) is not in line -2 of the executionContexts then
-      if pMenuName is "Edit" then
-         put generateRefactoringSubmenu() after pMenu
-      end if
-      put pMenu into pModifiedMenu
-      -- allow chaining dispatch messages without recursion
-      dispatch "revHookBuildScriptEditorMenu" with pMenuName, pMenu, pModifiedMenu
-   else
-      pass "revHookBuildScriptEditorMenu" with pMenuName, pMenu, pModifiedMenu
+on revHookBuildScriptEditorMenu pMenuName, @pMenu, @pModifiedMenu
+   if pMenuName is "Edit" then
+      put generateRefactoringSubmenu() after pMenu
    end if
-   return "handled" for value
+   put pMenu into pModifiedMenu
+   pass revHookBuildScriptEditorMenu
 end revHookBuildScriptEditorMenu
 
 constant kRefactors = "Rename Handler,Rename Variable,Convert Literal To Constant,Change Signature,Safe Delete,Move Handler To,Copy Handler To,Create Getter and Setter,Add Documentation,Add Test"
+constant kMenuItemConvertGlobal = "Convert Global to"
+constant kMenuItemConvertVariable = "Convert Variable to"
+constant kMenuItemCreateGetterAndSetter = "Create Getter and Setter"
+constant kMenuItemExtractTo = "Extract to"
+constant kMenuItemFindOrphans = "Find Orphan Code"
+constant kMenuItemUndoLast = "Undo Last Refactor"
+constant kMenuSubItemToScriptLocal = "Script Local"
+constant kMenuSubItemToProperty = "Property"
+constant kMenuSubItemToParameter = "Parameter"
 
 private function generateRefactoringSubmenu
    local tAddedText
@@ -227,19 +217,19 @@ private function generateRefactoringSubmenu
    repeat for each item tRefactor in kRefactors
       put tab & tRefactor & cr after tAddedText
    end repeat
-   put tab & "Convert Global to" & cr after tAddedText
-   put tab & tab & "Script Local" & cr after tAddedText
+   put tab & kMenuItemConvertGlobal & cr after tAddedText
+   put tab & tab & kMenuSubItemToScriptLocal & cr after tAddedText
    put tab & tab & "Getter and Setter" & cr after tAddedText
-   put tab & tab & "Property" & cr after tAddedText
-   put tab & "Convert Variable to" & cr after tAddedText
-   put tab & tab & "Script Local" & cr after tAddedText
-   put tab & tab & "Parameter" & cr after tAddedText
-   put tab & tab & "Property" & cr after tAddedText
-   put tab & "Extract to" & cr after tAddedText
+   put tab & tab & kMenuSubItemToProperty & cr after tAddedText
+   put tab & kMenuItemConvertVariable & cr after tAddedText
+   put tab & tab & kMenuSubItemToScriptLocal & cr after tAddedText
+   put tab & tab & kMenuSubItemToParameter & cr after tAddedText
+   put tab & tab & kMenuSubItemToProperty & cr after tAddedText
+   put tab & kMenuItemExtractTo & cr after tAddedText
    put tab & tab & "Command" & cr after tAddedText
    put tab & tab & "Function" & cr after tAddedText
-   put tab & "Find Orphan Code" & cr after tAddedText
-   put tab & "Undo Last Refactor" & cr after tAddedText
+   put tab & kMenuItemFindOrphans & cr after tAddedText
+   put tab & kMenuItemUndoLast & cr after tAddedText
    return tAddedText
 end generateRefactoringSubmenu
 
@@ -279,16 +269,16 @@ private command refactorMenuPick pWhich
             case "Change Signature"
                ChangeSignature --tSelectedText
                break
-            case "Convert Global to"
+            case kMenuItemConvertGlobal
                ConvertGlobalTo tSelectedText, item 3 of pWhich
                break
-            case "Convert Variable to"
+            case kMenuItemConvertVariable
                ConvertLocalVariableTo tSelectedText, item 3 of pWhich
                break
-            case "Create Getter and Setter"
+            case kMenuItemCreateGetterAndSetter
                CreateGetterAndSetterFor tSelectedText
                break
-            case "Extract to"
+            case kMenuItemExtractTo
                Extract tSelectedText, item 3 of pWhich
                break
             case "Safe Delete"
@@ -312,10 +302,10 @@ private command refactorMenuPick pWhich
             case "Add Documentation"
                AddDocsAtLine --the selectedline
                break
-            case "Find Orphan Code"
+            case kMenuItemFindOrphans
                FindOrphans
                break
-            case "Undo Last Refactor"
+            case kMenuItemUndoLast
                put CurrentObject() into tObject
                Undo.Pop tObject
                break
@@ -476,7 +466,7 @@ private command ConvertGlobalTo pVariableName, pType
    local tObject
    
    if pType is empty then
-      answer "Convert to" with "Script Local" and "Getter and Setter" and "Property" and "Cancel"
+      answer "Convert to" with kMenuSubItemToScriptLocal and "Getter and Setter" and kMenuSubItemToProperty and "Cancel"
       put it into tType
    else
       put pType into tType
@@ -500,15 +490,15 @@ private command ConvertGlobalTo pVariableName, pType
                
             case "Getter and Setter"
                insertGetterAndSetter pVariableName, tScript
-            case "Script Local"
+            case kMenuSubItemToScriptLocal
                repeat for each line tLine in tGlobalScript
                   RemoveDeclaration pVariableName, "global", tLine, 0, tScript
                end repeat
                -- find line for insertion
                insertAtStartOfScript "local" && pVariableName, tScript
                break
-            case "Property"
-               ConvertLocalVariableTo pVariableName, "property"
+            case kMenuSubItemToProperty
+               ConvertLocalVariableTo pVariableName, kMenuSubItemToProperty
                exit ConvertGlobalTo
                break
          end switch -- scope of global
@@ -596,7 +586,7 @@ private command ConvertLocalVariableTo pVariableName, pType
    local tLineCount
    
    if pType is empty then
-      answer "Convert to" with "script local" and "parameter" and "property" and "Cancel"
+      answer "Convert to" with kMenuSubItemToScriptLocal and kMenuSubItemToParameter and kMenuSubItemToProperty and "Cancel"
       put it into tType
    else
       put pType into tType
@@ -606,7 +596,7 @@ private command ConvertLocalVariableTo pVariableName, pType
       put scriptFromEditor() into tScript
       set the itemdelimiter to comma
       switch tType
-         case "script local"
+         case kMenuSubItemToScriptLocal
             -- see if the variable was declared
             put filteredScript("local *" & pVariableName & "*", tScript) into tLocalScriptArray
             put tLocalScriptArray into tLocalScript
@@ -624,7 +614,7 @@ private command ConvertLocalVariableTo pVariableName, pType
                ConvertLocalVariableToScriptLocal pVariableName, tScript
             end if
             break
-         case "parameter"
+         case kMenuSubItemToParameter
             local tWordCount
             
             -- find start of handler
@@ -662,7 +652,7 @@ private command ConvertLocalVariableTo pVariableName, pType
                add 1 to tLineCount
             end repeat
             break
-         case "property"
+         case kMenuSubItemToProperty
             local tTargetObject
             ask "property of what object?"
             if it is not empty then
