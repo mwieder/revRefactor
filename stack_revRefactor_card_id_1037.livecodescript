@@ -9,3 +9,7 @@ Script "stack_revRefactor_card_id_1037"
 on mouseUp
    go card 1
 end mouseUp
+
+on linkClicked
+   launch url "https://opensource.org/licenses/MIT"
+end linkClicked
