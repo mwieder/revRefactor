@@ -1526,6 +1526,12 @@ private command RenameHandler pVarName
          replace pVarName with tNewName in line tStartLineNumber of tScript
          replace pVarName with tNewName in line tEndLineNumber of tScript
          
+         // 2019-06-03 AS: Also change "exit handlername" to "exit newHandlername"
+         put line tStartLineNumber to tEndLineNumber of tScript into tTempScript
+         replace "exit" && pVarName with "exit" && tNewName in tTempScript
+         put tTempScript into line tStartLineNumber to tEndLineNumber of tScript
+         // 2019-06-03 AS: END
+         
          set the itemdelimiter to comma
          put word 3 to -1 of tLine into tOldParams
          put token 1 to -1 of tOldParams into tOldParams
