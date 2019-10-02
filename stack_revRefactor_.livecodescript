@@ -112,6 +112,8 @@ Script "stack_revRefactor_"
 * added more constants for maintainability
 * moved script from frontscripts to backscripts to avoid recursion
 * this resulted in being able to remove the cruft from the revHook message handlers
+2019.07.28 mdw
+* Add Documentation got the parameter list wrong for private handlers.
 */
 
 /*
@@ -198,7 +200,7 @@ on revHookBuildScriptEditorMenu pMenuName, @pMenu, @pModifiedMenu
    pass revHookBuildScriptEditorMenu
 end revHookBuildScriptEditorMenu
 
-constant kRefactors = "Rename Handler,Rename Variable,Convert Literal To Constant,Change Signature,Safe Delete,Move Handler To,Copy Handler To,Create Getter and Setter,Add Documentation,Add Test"
+constant kRefactors = "Rename Handler,Rename Variable,Convert Literal To Constant,Change Signature,Safe Delete,Move Handler To,Copy Handler To,Create Getter and Setter,Add Documentation,Add Test,Code quality"
 constant kMenuItemConvertGlobal = "Convert Global to"
 constant kMenuItemConvertVariable = "Convert Variable to"
 constant kMenuItemCreateGetterAndSetter = "Create Getter and Setter"
@@ -302,6 +304,10 @@ private command refactorMenuPick pWhich
             case "Add Documentation"
                AddDocsAtLine --the selectedline
                break
+            case "Code quality"
+               put CurrentObject() into tObject
+               get codeQualityOf(tObject)
+               break
             case kMenuItemFindOrphans
                FindOrphans
                break
@@ -330,22 +336,17 @@ private command refactorMenuPick pWhich
       end try
       switch item 1 of pWhich
          case "Go Back"
-            local tIndex
-            local tDestination
-            put word 2 of the selectedline into tIndex
-            put the long id of CurrentObject() into tObject
-            if sBreadCrumbs[tIndex,tObject] is empty then
-               put item 1 of sBreadCrumbs["lastBreadCrumb"] into tLine
-               put item 2 of sBreadCrumbs["lastBreadCrumb"] into tDestination
-            else
-               put item 1 of sBreadCrumbs[tIndex,tObject] into tLine
-               put item 2 of sBreadCrumbs[tIndex,tObject] into tDestination
+            local tIndex, tDestination, tCount
+            --put word 2 of the selectedline into tIndex
+            --put the long id of CurrentObject() into tObject
+            put sBreadCrumbs["count"] into tCount
+            put sBreadCrumbs[tCount]["line"] into tLine
+            put sBreadCrumbs[tCount]["destination"] into tDestination
+            if tCount > 0 then
+               put tCount-1 into sBreadCrumbs["count"]
             end if
             if tDestination is not empty then
                dispatch "revSEGoExecutionPoint" to stack main with tDestination, tLine, true, true
-               -- is this a good idea?
-               delete variable sBreadCrumbs[tIndex,tObject]
-            else
             end if
             break
          case "Go to definition"
@@ -356,8 +357,14 @@ private command refactorMenuPick pWhich
             if it is "handled" then
                put the result into tMatches
                if tMatches is not empty then
-                  put tLine,tObject into sBreadCrumbs[item 4 to 5 of line 1 of tMatches]
-                  put tLine,tObject into sBreadCrumbs["lastBreadCrumb"]
+                  put sBreadCrumbs["count"] into tCount
+                  if tCount is empty then
+                     put 0 into tCount
+                  end if
+                  add 1 to tCount
+                  put tLine into sBreadCrumbs[tCount]["line"]
+                  put tObject into sBreadCrumbs[tCount]["destination"]
+                  put tCount into sBreadCrumbs["count"]
                end if
             end if
             break
@@ -1979,13 +1986,15 @@ private function availableHandlersOf pObject
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
                delete word 1 of tLine
+               put "PF" into tHandlerType
+            else
+               put "F" into tHandlerType
             end if
             put word 2 of tLine into tHandler
             put offset("(", tHandler) into tPos
             if tPos > 0 then
                delete char tPos to -1 of tHandler
             end if
-            put "F" into tHandlerType
             put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
             put tPos + tLastLineNumber into tLastLineNumber
             put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
@@ -2002,9 +2011,11 @@ private function availableHandlersOf pObject
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
                delete word 1 of tLine
+               put "PM" into tHandlerType
+            else
+               put simpleTypeFromVerboseType(word 1 of tLine) into tHandlerType
             end if
             put word 2 of tLine into tHandler
-            put simpleTypeFromVerboseType(word 1 of tLine) into tHandlerType
             put lineoffset(tLine, tHandlers, tLastLineNumber) into tPos
             put tPos + tLastLineNumber into tLastLineNumber
             put tHandlerType into tHandlerArray[tHandler][tLastLineNumber]["type"]
@@ -2753,6 +2764,107 @@ private function targetStackOf pWhich
    put the short name of tStackName into tStackName
    return the mainstack of stack tStackName
 end targetStackOf
+
+private function codeQualityOf pObject
+   local tHandlers, tCommands
+   local tNumHandlers
+   local tAvgPrivateCommandLines, tAvgPublicCommandLines, tAvgPrivateFunctionLines, tAvgPublicFunctionLines
+   local tAverageLines, tAverage, tComplexity, tAverageComplexity
+   local tTotalCommands, tTotalFunctions
+   
+   put 0 into tAverageLines
+   put 0 into tComplexity
+   put availableHandlersOf(pObject) into tHandlers
+   put the number of lines of tHandlers into tNumHandlers
+   set the itemDelimiter to comma
+   
+   put averageNumberOfLinesOfType("PM", tHandlers, pObject) into tAverage
+   put item 1 of tAverage into tAvgPrivateCommandLines
+   add item 2 of tAverage to tComplexity
+   put item 3 of tAverage into tTotalCommands
+   add tAvgPrivateCommandLines to tAverageLines
+   
+   put averageNumberOfLinesOfType("M", tHandlers, pObject) into tAverage
+   put item 1 of tAverage into tAvgPublicCommandLines
+   add item 2 of tAverage to tComplexity
+   add item 3 of tAverage to tTotalCommands
+   add tAvgPublicCommandLines to tAverageLines
+   
+   put averageNumberOfLinesOfType("PF", tHandlers, pObject) into tAverage
+   put item 1 of tAverage into tAvgPrivateFunctionLines
+   add item 2 of tAverage to tComplexity
+   add item 3 of tAverage to tTotalFunctions
+   add tAvgPrivateFunctionLines to tAverageLines
+   
+   put averageNumberOfLinesOfType("F", tHandlers, pObject) into tAverage
+   put item 1 of tAverage into tAvgPublicFunctionLines
+   add item 2 of tAverage to tComplexity
+   add item 3 of tAverage to tTotalFunctions
+   add tAvgPublicFunctionLines to tAverageLines
+   
+   put tAverageLines / 4 into tAverageLines
+   put tComplexity / 4 into tAverageComplexity
+   
+   answer tNumHandlers && "handlers(" & tTotalCommands && "commands," & tTotalFunctions && "functions)" & cr \
+         & "Public commands:" && "average" && round(tAvgPublicCommandLines) && "code lines per handler"  & cr \
+         & "Public functions:" && "average" && round(tAvgPublicFunctionLines) && "code lines per handler" & cr \
+         & "Private commands:" && "average" && round(tAvgPrivateCommandLines) && "code lines per handler" & cr \
+         & "Private functions:" && "average" && round(tAvgPrivateFunctionLines) && "code lines per handler" & cr \
+         & round(tAverageLines) && "average code lines per handler" & cr \
+         & "Average complexity:" && round(tComplexity) & cr
+end codeQualityOf
+
+private function averageNumberOfLinesOfType pType, pHandlerList, pObject
+   local tNumPublicFunctions
+   local tPublicFunctionLines
+   local tTotalLines, tComplexity
+   
+   set the itemDelimiter to comma
+   filter pHandlerList with pType & "*"
+   put the number of lines in pHandlerList into tNumPublicFunctions
+   put totalLinesOf(pHandlerList, pObject) into tTotalLines
+   put item 1 of tTotalLines into tPublicFunctionLines
+   put item 2 of tTotalLines into tComplexity
+   return tPublicFunctionLines / tNumPublicFunctions, tComplexity, tNumPublicFunctions
+end averageNumberOfLinesOfType
+
+private function totalLinesOf pHandlers, pObject
+   local tTotal, tStart, tEnd
+   local tText
+   local tComplexity
+   
+   put 0 into tTotal
+   put 1 into tComplexity
+   repeat for each line tHandler in pHandlers
+      set the itemDelimiter to space
+      put item 3 of tHandler into tStart
+      put item 4 of tHandler into tEnd
+      put line tStart to tEnd-1 of the script of pObject into tText
+      -- remove block comments
+      put replaceText(tText, "\/\*(\*(?!\/)|[^*])*\*\/", "") into tText
+      filter tText without empty # remove blank lines
+      -- remove comment lines
+      repeat for each line tLine in tText
+         put token 1 to -1 of tLine into tLine
+         if tLine is empty then
+            next repeat
+         end if
+         switch word 1 of tLine
+            case "next"
+            case "if"
+            case "repeat"
+            case "switch"
+               add 1 to tComplexity
+               break
+            case "end"
+               subtract 1 from tComplexity
+               break
+         end switch
+         add 1 to tTotal
+      end repeat
+   end repeat
+   return tTotal, tComplexity
+end totalLinesOf
 
 --> Undo support
 
