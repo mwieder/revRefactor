@@ -1533,6 +1533,7 @@ private command RenameHandler pVarName
          replace pVarName with tNewName in line tStartLineNumber of tScript
          replace pVarName with tNewName in line tEndLineNumber of tScript
          
+         local tTempScript
          // 2019-06-03 AS: Also change "exit handlername" to "exit newHandlername"
          put line tStartLineNumber to tEndLineNumber of tScript into tTempScript
          replace "exit" && pVarName with "exit" && tNewName in tTempScript
@@ -2808,8 +2809,19 @@ private function codeQualityOf pObject
    add item 3 of tAverage to tTotalFunctions
    add tAvgPublicFunctionLines to tAverageLines
    
-   put tAverageLines / 4 into tAverageLines
-   put tComplexity / 4 into tAverageComplexity
+   -- added BN
+   local tHandlerTypeNum = 0
+   if tAvgPrivateCommandLines > 0 then add 1 to tHandlerTypeNum
+   if tAvgPublicCommandLines > 0 then add 1 to tHandlerTypeNum
+   if tAvgPrivateFunctionLines > 0 then add 1 to tHandlerTypeNum
+   if tAvgPublicFunctionLines > 0 then add 1 to tHandlerTypeNum
+   -- end added BN
+   
+   --put tAverageLines / 4 into tAverageLines
+   --put tComplexity / 4 into tAverageComplexity
+   
+   put tAverageLines / max(tHandlerTypeNum, 1) into tAverageLines -- changed BN
+   put tComplexity / max(tHandlerTypeNum, 1) into tAverageComplexity -- changed BN
    
    answer tNumHandlers && "handlers(" & tTotalCommands && "commands," & tTotalFunctions && "functions)" & cr \
          & "Public commands:" && "average" && round(tAvgPublicCommandLines) && "code lines per handler"  & cr \
@@ -2827,6 +2839,7 @@ private function averageNumberOfLinesOfType pType, pHandlerList, pObject
    
    set the itemDelimiter to comma
    filter pHandlerList with pType & "*"
+   if pHandlerList is empty then return 0,0,0 -- added BN : avoids division by zero
    put the number of lines in pHandlerList into tNumPublicFunctions
    put totalLinesOf(pHandlerList, pObject) into tTotalLines
    put item 1 of tTotalLines into tPublicFunctionLines
@@ -2845,7 +2858,8 @@ private function totalLinesOf pHandlers, pObject
       set the itemDelimiter to space
       put item 3 of tHandler into tStart
       put item 4 of tHandler into tEnd
-      put line tStart to tEnd-1 of the script of pObject into tText
+      -- changed BN to omit handler declaration from code line count
+      put line tStart+1 to tEnd-1 of the script of pObject into tText
       -- remove block comments
       put replaceText(tText, "\/\*(\*(?!\/)|[^*])*\*\/", "") into tText
       filter tText without empty # remove blank lines
