@@ -44,7 +44,11 @@ on preOpenStack
       end if
    catch e
    end try
+   --if there is a stack "revGlX2 code" then
+   --activateGLX2se
+   --else
    activateIDEse
+   --end if
 end preOpenStack
 
 on closeStack

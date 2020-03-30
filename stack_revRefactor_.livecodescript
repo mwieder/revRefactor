@@ -145,7 +145,7 @@ constant kLeftBrackets = "[["
 local kRightBracketReplacement = "]]"
 local kLeftBracketReplacement = "[["
 local kReference = "@"
-local kQuote = ""
+local kQuote = "'"
 
 local sBreadCrumbs
 local sTime # used for timing handlers here
@@ -195,6 +195,9 @@ end revHookBuildScriptEditorContextMenu
 on revHookBuildScriptEditorMenu pMenuName, @pMenu, @pModifiedMenu
    if pMenuName is "Edit" then
       put generateRefactoringSubmenu() after pMenu
+      if there is a stack "revGLX2 code" then
+         put pMenu into button "Edit" of stack "revGLX2 code"
+      end if
    end if
    put pMenu into pModifiedMenu
    pass revHookBuildScriptEditorMenu
@@ -399,8 +402,10 @@ private function scriptFromEditor pObject
    dispatch function "textGetScript" to group "Editor" of stack main
    if it is "unhandled" then
       throw "unhandled function textGetScript"
+      --put field "code storage" of stack "revGLX2 code" into tReturnValue
+   else
+      put the result into tReturnValue
    end if
-   put the result into tReturnValue
    unlock screen
    return tReturnValue
 end scriptFromEditor
@@ -431,6 +436,9 @@ private command ConvertLiteralToConstant pLiteral
       click at the selectedLoc
       put the clickText into pLiteral
    end if
+   if pLiteral is empty then
+      exit ConvertLiteralToConstant
+   end if
    put CurrentObject() into tObject
    put scriptFromEditor() into tScript
    
@@ -440,6 +448,8 @@ private command ConvertLiteralToConstant pLiteral
    -- create constant
    put pLiteral into tConstant
    replace quote with empty in tConstant
+   replace space with "_" in tConstant
+   replace "\" with empty in tConstant
    put "k" before tConstant
    if "constant" && tConstant is not in tScript then
       put "constant" && tConstant && "= " into tLineToInsert
@@ -449,17 +459,20 @@ private command ConvertLiteralToConstant pLiteral
             put quote & pLiteral & quote into pLiteral
          end if
       end if
-      replace pLiteral with tConstant in tScript
-      
       put pLiteral & cr after tLineToInsert
-      -- insert tLineToInsert at insertion point
-      if tInsertionPoint is not 0 then
-         put tLineToInsert before line tInsertionPoint of tScript
-         SetScript tScript, tObject
-         put true into tSuccess?
-      else
-         Undo.Pop tObject, "Undo.RestoreScript"
-      end if
+   end if
+   
+   local tLine
+   put word 2 of the clickline into tLine
+   replace pLiteral with tConstant in line tLine of tScript
+   
+   -- insert tLineToInsert at insertion point
+   if tInsertionPoint is not 0 then
+      put tLineToInsert before line tInsertionPoint of tScript
+      SetScript tScript, tObject
+      put true into tSuccess?
+   else
+      Undo.Pop tObject, "Undo.RestoreScript"
    end if
    return tSuccess?
 end ConvertLiteralToConstant
@@ -1537,6 +1550,7 @@ private command RenameHandler pVarName
          // 2019-06-03 AS: Also change "exit handlername" to "exit newHandlername"
          put line tStartLineNumber to tEndLineNumber of tScript into tTempScript
          replace "exit" && pVarName with "exit" && tNewName in tTempScript
+         replace "pass" && pVarName with "pass" && tNewName in tTempScript
          put tTempScript into line tStartLineNumber to tEndLineNumber of tScript
          // 2019-06-03 AS: END
          
@@ -1608,7 +1622,7 @@ private command RenameVariable pVariableName
       put "This script" into tRenameType
       put CurrentObject() into tObject
       put scriptFromEditor() into tScript
-      
+
       -- see if this is a script-local or handler-local variable
       put filteredScript("local*" & pVariableName, tScript) into tTestForLocal
       
@@ -1656,6 +1670,7 @@ private command RenameVariable pVariableName
             end switch
             if tShouldProcessLine? then
                if pVariableName is in tLine then
+                  
                   -- ignore string literals
                   replace q(pVariableName) with kQuote in tLine
                   put DoReplace(tLine, pVariableName, tNewName) into tLine
@@ -1668,7 +1683,6 @@ private command RenameVariable pVariableName
             end if
             add 1 to tLineCount -- moved per bn
          end repeat -- for each line tLine in tLocalScript
-         
          SetScript tScript
       end if
    end if
@@ -1849,6 +1863,7 @@ end HandlerType
 private function InsertionPoint pScript
    local tInsertionPoint
    local tInComment?
+   local tPos
    
    put 0 into tInsertionPoint
    put false into tInComment?
@@ -1856,14 +1871,13 @@ private function InsertionPoint pScript
    if word 1 to -1 of pScript is not empty then
       repeat for each line tLine in pScript
          add 1 to tInsertionPoint
-         if token 1 of tLine is empty then
-            -- ignore comment lines
-            next repeat
-         end if
-         if tLine begins with "/*" then
+         put offset("/*",tLine) into tPos
+         if tPos > 0 then
             -- try to ignore block comments
-            put true into tInComment?
-            next repeat
+            if offset("*/", tLine) < tPos then
+               put true into tInComment?
+               next repeat
+            end if
          end if
          if "*/" is in tLine then
             put false into tInComment?
@@ -1895,7 +1909,13 @@ private function ContextForCurrentLine
    local tTarget
    
    lock screen
-   focus on field kCodeField of group "Editor" of stack main
+   
+   dispatch function "glx2IsInUse"
+   if it is not "unhandled" and the result is true then
+      focus on field "code storage" of group "Editor" of stack "revGLX2 code"
+   else
+      focus on field kCodeField of group "Editor" of stack "revNewScripteditor 1"
+   end if
    put word 2 of the selectedline into tTarget
    unlock screen
    return ScriptContextForLineNumber(tTarget)
@@ -1911,7 +1931,7 @@ private function ScriptContextForLineNumber pSelectedLine
    local tHandlerList
    local tObject
    
-   -- if the script has been edited by not applied
+   -- if the script has been edited but not applied
    -- revavailablehandlers will return wrong information
    put CurrentObject() into tObject
    put availableHandlersOf(tObject) into tHandlerList
@@ -1955,7 +1975,9 @@ private function availableHandlersOf pObject
    if sObjectHandlersArray[pObject] is not empty then
       return sObjectHandlersArray[pObject]
    end if
-   put revListScriptEditors() into tEditors
+   
+   put editor() into tEditors
+   
    repeat for each line tEditor in tEditors
       -- get a list of the objects being edited in all editors
       dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
@@ -2204,10 +2226,14 @@ end TestScriptForUse
 private command SetScript pScript, pObject
    local tSelectionPoint
    local tSavedDefaultStack
+   local tField, tEditor
    
    lock screen
    put the defaultstack into tSavedDefaultStack
-   set the defaultstack to main
+   #TODO: this returns a list of editors
+   # if more than one is open, find the one editing pObject
+   put editor() into tEditor
+   set the defaultstack to tEditor
    if pObject is empty then
       put CurrentObject() into pObject
    end if
@@ -2217,8 +2243,9 @@ private command SetScript pScript, pObject
    try
       put the selectedChunk into tSelectionPoint
       StoreScrollsOfCard
-      put pScript into field kCodeField of group "Editor"
-      dispatch "scriptColorize" to group "Editor" of stack main with "script"
+      put editorField() into tField
+      put pScript into field tField of group "Editor"
+      dispatch "scriptColorize" to group "Editor" of stack tEditor with "script"
       setSEDirtyFlagFor pObject
       RestoreScrollsOfCard
       if tSelectionPoint is not empty then
@@ -2648,6 +2675,8 @@ private function removeBracketsInQuotesFrom pText
          end if
          add 1 to i
       end repeat
+   else
+      put pText into tText
    end if
    return tText
 end removeBracketsInQuotesFrom
@@ -2733,25 +2762,60 @@ end filteredScript
 
 local sEditObjects
 private command StoreScrollsOfCard
-   local tCard
+   local tCard, tField
    
    lock screen
    put the short name of this card into tCard
-   put the vscroll of field kCodeField of card tCard into sEditObjects["card"][tCard]["vScroll"]
-   put the hscroll of field kCodeField of card tCard into sEditObjects["card"][tCard]["hScroll"]
+   put editorField() into tField
+   put the vscroll of field tField of card tCard into sEditObjects["card"][tCard]["vScroll"]
+   put the hscroll of field tField of card tCard into sEditObjects["card"][tCard]["hScroll"]
    unlock screen
 end StoreScrollsOfCard
 
 private command RestoreScrollsOfCard
-   local tCard
+   local tCard, tField
    
    lock screen
    put the short name of this card into tCard
-   set the vscroll of field kCodeField of card tCard to sEditObjects["card"][tCard]["vScroll"]
-   set the hscroll of field kCodeField of card tCard to sEditObjects["card"][tCard]["hScroll"]
-   dispatch "matchScrolls" to field kCodeField of card tCard
+   put editorField() into tField
+   set the vscroll of field tField of card tCard to sEditObjects["card"][tCard]["vScroll"]
+   set the hscroll of field tField of card tCard to sEditObjects["card"][tCard]["hScroll"]
+   dispatch "matchScrolls" to field tField of card tCard
    unlock screen
 end RestoreScrollsOfCard
+
+private function editorField
+   local tField
+   
+   dispatch function "glx2IsInUse"
+   if it is "handled" and the result is true then
+      put "code storage" into tField
+   else
+      put kCodeField into tField
+   end if
+   return tField
+end editorField
+
+private function editor pObject
+   local tEditors
+   local tTargetObjects
+   
+   dispatch function "glx2IsInUse"
+   if it is "handled" and the result is true then
+      put "revGLX2 code" into tEditors
+   else
+      put revListScriptEditors() into tEditors
+      repeat for each line tEditor in tEditors
+         -- get a list of the objects being edited in all editors
+         dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
+         put the result into tTargetObjects
+         if pObject is among the lines of tTargetObjects then
+            put tEditor into tEditors
+         end if
+      end repeat
+   end if
+   return tEditors
+end editor
 
 /**
 * Return the mainstack of the given object
@@ -2785,25 +2849,27 @@ private function codeQualityOf pObject
    put the number of lines of tHandlers into tNumHandlers
    set the itemDelimiter to comma
    
-   put averageNumberOfLinesOfType("PM", tHandlers, pObject) into tAverage
+   local tScript
+   put the script of pObject into tScript
+   put averageNumberOfLinesOfType("PM", tHandlers, tScript) into tAverage
    put item 1 of tAverage into tAvgPrivateCommandLines
    add item 2 of tAverage to tComplexity
    put item 3 of tAverage into tTotalCommands
    add tAvgPrivateCommandLines to tAverageLines
    
-   put averageNumberOfLinesOfType("M", tHandlers, pObject) into tAverage
+   put averageNumberOfLinesOfType("M", tHandlers, tScript) into tAverage
    put item 1 of tAverage into tAvgPublicCommandLines
    add item 2 of tAverage to tComplexity
    add item 3 of tAverage to tTotalCommands
    add tAvgPublicCommandLines to tAverageLines
    
-   put averageNumberOfLinesOfType("PF", tHandlers, pObject) into tAverage
+   put averageNumberOfLinesOfType("PF", tHandlers, tScript) into tAverage
    put item 1 of tAverage into tAvgPrivateFunctionLines
    add item 2 of tAverage to tComplexity
    add item 3 of tAverage to tTotalFunctions
    add tAvgPrivateFunctionLines to tAverageLines
    
-   put averageNumberOfLinesOfType("F", tHandlers, pObject) into tAverage
+   put averageNumberOfLinesOfType("F", tHandlers, tScript) into tAverage
    put item 1 of tAverage into tAvgPublicFunctionLines
    add item 2 of tAverage to tComplexity
    add item 3 of tAverage to tTotalFunctions
@@ -2817,9 +2883,6 @@ private function codeQualityOf pObject
    if tAvgPublicFunctionLines > 0 then add 1 to tHandlerTypeNum
    -- end added BN
    
-   --put tAverageLines / 4 into tAverageLines
-   --put tComplexity / 4 into tAverageComplexity
-   
    put tAverageLines / max(tHandlerTypeNum, 1) into tAverageLines -- changed BN
    put tComplexity / max(tHandlerTypeNum, 1) into tAverageComplexity -- changed BN
    
@@ -2832,7 +2895,7 @@ private function codeQualityOf pObject
          & "Average complexity:" && round(tComplexity) & cr
 end codeQualityOf
 
-private function averageNumberOfLinesOfType pType, pHandlerList, pObject
+private function averageNumberOfLinesOfType pType, pHandlerList, pScript
    local tNumPublicFunctions
    local tPublicFunctionLines
    local tTotalLines, tComplexity
@@ -2841,25 +2904,33 @@ private function averageNumberOfLinesOfType pType, pHandlerList, pObject
    filter pHandlerList with pType & "*"
    if pHandlerList is empty then return 0,0,0 -- added BN : avoids division by zero
    put the number of lines in pHandlerList into tNumPublicFunctions
-   put totalLinesOf(pHandlerList, pObject) into tTotalLines
+   put totalLinesOf(pHandlerList, pScript) into tTotalLines
    put item 1 of tTotalLines into tPublicFunctionLines
    put item 2 of tTotalLines into tComplexity
    return tPublicFunctionLines / tNumPublicFunctions, tComplexity, tNumPublicFunctions
 end averageNumberOfLinesOfType
 
-private function totalLinesOf pHandlers, pObject
+/**
+* totalLinesOf
+* function
+*  pHandlers :
+*  pObject : object whose script we want to examime
+* returns
+*  total number of lines, complexity
+*/
+private function totalLinesOf pHandlers, pScript
    local tTotal, tStart, tEnd
    local tText
    local tComplexity
    
    put 0 into tTotal
    put 1 into tComplexity
+   set the itemDelimiter to space
    repeat for each line tHandler in pHandlers
-      set the itemDelimiter to space
       put item 3 of tHandler into tStart
       put item 4 of tHandler into tEnd
       -- changed BN to omit handler declaration from code line count
-      put line tStart+1 to tEnd-1 of the script of pObject into tText
+      put line tStart+1 to tEnd-1 of pScript into tText
       -- remove block comments
       put replaceText(tText, "\/\*(\*(?!\/)|[^*])*\*\/", "") into tText
       filter tText without empty # remove blank lines
@@ -2870,6 +2941,8 @@ private function totalLinesOf pHandlers, pObject
             next repeat
          end if
          switch word 1 of tLine
+            case "send"
+            case "dispatch"
             case "next"
             case "if"
             case "repeat"
@@ -3114,18 +3187,15 @@ end Undo.RestoreScript
 private function CurrentObject --pCard
    local tObject
    
-   if glx2IsInUse() then
-      dispatch function "CurrentObject" to stack main
+   dispatch function "glx2IsInUse"
+   if it is "handled" and the result is true then
+      dispatch function "CurrentObject" to stack "revGLX2 code"
    else
-      dispatch "getCurrentTab" to group "Script Tabs" of stack main
+      dispatch "getCurrentTab" to group "Script Tabs" of stack "revNewScriptEditor 1"
    end if
    -- NOTE: getCurrentTab returns the object reference as a rugged ID
    put the result into tObject
 end CurrentObject
-
-private function glx2IsInUse
-   return kCodeField is "code storage"
-end glx2IsInUse
 
 -- if the stackrunner is not being used, then ensure *something* works
 -- note that empty is true

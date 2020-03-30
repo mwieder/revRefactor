@@ -103,6 +103,10 @@ Issues a warning if you attempt to undo changes already saved to disk.
 Not strictly part of a refactoring process, but since I was reworking the Edit menu anyway...
 After a "Go to definition" call, this gets you back to where you were.
 
-### Known issues
+### Code Quality (experimental)
+An attempt at getting Cyclomatic Code Complexity scores for LiveCode scripts.
+Still a Work In Progress, so don't take it too seriously.
+For reference: https://en.wikipedia.org/wiki/Cyclomatic_complexity
 
+### Known issues
 
