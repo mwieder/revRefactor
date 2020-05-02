@@ -102,7 +102,7 @@ Script "stack_revRefactor_"
 * improved speed of removing block comments (bn's function)
 2019.05.14 mdw
 * removed some unused local variables
-* removed unused parameters from AddDocsAtLine, AddTestAtLine, ChangeSignature, scriptObjectsOfObject, CurrentObject
+* removed unused parameters from AddDocsAtLine, AddTestAtLine, ChangeSignature, scriptObjectsOfObject, CurrentObjectID
 * unused parameter list is now sorted numerically
 * increased speed of blockComments and quotes removal significantly
 * DoReplace can now rename handler parameters properly
@@ -138,8 +138,9 @@ end mouseUp
 
 -- some fake constants
 -- because rValues can't be expressions
-local kCodeField = "Script"
+constant kCodeField = "Script"
 local main = "revNewScriptEditor 1"
+constant kGLX2 = "glx2ScriptEditor"
 constant kRightBrackets = "]]"
 constant kLeftBrackets = "[["
 local kRightBracketReplacement = "]]"
@@ -160,13 +161,11 @@ local sScriptArray
 local sObjectHandlersArray
 
 command activateGLX2se
-   put "code storage" into kCodeField
-   put "revGLX2 Code" into main
+   put kGLX2 into main
    fillFakeConstants
 end activateGLX2se
 
 command activateIDEse
-   put "Script" into kCodeField
    put "revNewScriptEditor 1" into main
    fillFakeConstants
 end activateIDEse
@@ -195,8 +194,8 @@ end revHookBuildScriptEditorContextMenu
 on revHookBuildScriptEditorMenu pMenuName, @pMenu, @pModifiedMenu
    if pMenuName is "Edit" then
       put generateRefactoringSubmenu() after pMenu
-      if there is a stack "revGLX2 code" then
-         put pMenu into button "Edit" of stack "revGLX2 code"
+      if there is a stack kGLX2 then
+         put pMenu into button "Edit" of stack kGLX2
       end if
    end if
    put pMenu into pModifiedMenu
@@ -308,15 +307,16 @@ private command refactorMenuPick pWhich
                AddDocsAtLine --the selectedline
                break
             case "Code quality"
-               put CurrentObject() into tObject
+               put CurrentObjectID() into tObject
                get codeQualityOf(tObject)
                break
             case kMenuItemFindOrphans
                FindOrphans
                break
             case kMenuItemUndoLast
-               put CurrentObject() into tObject
+               put CurrentObjectID() into tObject
                Undo.Pop tObject
+               --setSEDirtyFlagFor tObject, false
                break
             default
                throw kNotImplemented
@@ -355,7 +355,7 @@ private command refactorMenuPick pWhich
          case "Go to definition"
             -- hijack Go to definition so we can record where we're going and where we've been
             put word 2 of the selectedline into tLine
-            put CurrentObject() into tObject
+            put CurrentObjectID() into tObject
             dispatch function "seMatchingDefinitions" to stack main with tSelectedHandler, tObject
             if it is "handled" then
                put the result into tMatches
@@ -402,7 +402,6 @@ private function scriptFromEditor pObject
    dispatch function "textGetScript" to group "Editor" of stack main
    if it is "unhandled" then
       throw "unhandled function textGetScript"
-      --put field "code storage" of stack "revGLX2 code" into tReturnValue
    else
       put the result into tReturnValue
    end if
@@ -439,7 +438,7 @@ private command ConvertLiteralToConstant pLiteral
    if pLiteral is empty then
       exit ConvertLiteralToConstant
    end if
-   put CurrentObject() into tObject
+   put CurrentObjectID() into tObject
    put scriptFromEditor() into tScript
    
    -- find line for insertion
@@ -492,7 +491,7 @@ private command ConvertGlobalTo pVariableName, pType
       put pType into tType
    end if
    
-   put CurrentObject() into tObject
+   put CurrentObjectID() into tObject
    put scriptFromEditor() into tScript
    -- see if the global was declared
    put filteredScript("global *" & pVariableName & "*", tScript) into tGlobalScript
@@ -551,7 +550,7 @@ command declareLocalVariable pVariableName
    
    put scriptFromEditor() into tScript
    addLocalVariableToHandler pVariableName, tScript
-   SetScript tScript, CurrentObject()
+   SetScript tScript, CurrentObjectID()
 end declareLocalVariable
 
 private command RemoveDeclaration pVariableName, pType, pLine, pOffset, @pScript
@@ -612,7 +611,7 @@ private command ConvertLocalVariableTo pVariableName, pType
       put pType into tType
    end if
    if tType is not "Cancel" then
-      put CurrentObject() into tObject
+      put CurrentObjectID() into tObject
       put scriptFromEditor() into tScript
       set the itemdelimiter to comma
       switch tType
@@ -929,7 +928,7 @@ private command ChangeSignatureInEditorScript pStartLineNumber, pEndLineNumber, 
    set the itemDelimiter to comma
    set the wholematches to true
    put false into tIsPrivate
-   put CurrentObject() into tObject
+   put CurrentObjectID() into tObject
    delete variable sNewParamsArray
    
    -- replace the handler declaration itself
@@ -1206,7 +1205,7 @@ private command AddTestAtLine --pSelectedLine
    local tTestContents, tFileContents
    local tNextTestNumber, tNextObjectNumber
    
-   put CurrentObject() into tPathName
+   put CurrentObjectID() into tPathName
    put the long id of tPathName into tPathName
    -- get just the stack name
    put "stack" && word -1 of tPathName into tFileName
@@ -1361,7 +1360,7 @@ private function GenerateTestFor pType, pHandler, pParameters
    end if
    replace "$HANDLER" with pHandler in tTestScript
    replace "$PARAMETERS" with pParameters in tTestScript
-   put CurrentObject() into tObject
+   put CurrentObjectID() into tObject
    put word -1 of tObject into tStackName
    put q(word 1 to -2 of tObject) && "&& q(" & tStackName & ")" into tObject
    replace "$OBJECT" with tObject in tTestScript
@@ -1518,7 +1517,7 @@ private command RenameHandler pVarName
       put HandlerType() into tType
       -- first see if we're renaming a private handler.
       -- if so then we don't need to look at other scripts
-      put CurrentObject() into tObject
+      put CurrentObjectID() into tObject
       put scriptFromEditor() into tScript
       put filteredScript("private*" & pVarName & "*", tScript) into tTestForLocal
       if tTestForLocal is not empty then
@@ -1535,6 +1534,15 @@ private command RenameHandler pVarName
          if tNewName is empty or tNewName is pVarName then
             exit RenameHandler
          end if
+         
+         -- see if there's already a handler of that name
+         local tAlreadyExists
+         filter tScript with "end" && tNewName & "*" into tAlreadyExists
+         if tAlreadyExists is not empty then
+            answer "handler" && tNewName && "already exists"
+            exit RenameHandler
+         end if
+         
          lock screen         
          local tInsertionPoint, tStartLineNumber, tEndLineNumber
          local tLine, tParamsArray, tOldParams
@@ -1543,12 +1551,11 @@ private command RenameHandler pVarName
          put word 4 of tInsertionPoint into tEndLineNumber
          put line tStartLineNumber of tScript into tLine
          
-         replace pVarName with tNewName in line tStartLineNumber of tScript
-         replace pVarName with tNewName in line tEndLineNumber of tScript
-         
          local tTempScript
          // 2019-06-03 AS: Also change "exit handlername" to "exit newHandlername"
          put line tStartLineNumber to tEndLineNumber of tScript into tTempScript
+         replace pVarName with tNewName in line 1 of tTempScript
+         replace pVarName with tNewName in line -1 of tTempScript
          replace "exit" && pVarName with "exit" && tNewName in tTempScript
          replace "pass" && pVarName with "pass" && tNewName in tTempScript
          put tTempScript into line tStartLineNumber to tEndLineNumber of tScript
@@ -1615,14 +1622,13 @@ private command RenameVariable pVariableName
    local tStartLineNumber, tEndLineNumber
    local tLocalScript
    local tLineCount
-   local tObject
+   --local tObject
    
    if pVariableName is not empty then
       -- default to entire script
       put "This script" into tRenameType
-      put CurrentObject() into tObject
+      --put CurrentObjectID() into tObject
       put scriptFromEditor() into tScript
-
       -- see if this is a script-local or handler-local variable
       put filteredScript("local*" & pVariableName, tScript) into tTestForLocal
       
@@ -1652,9 +1658,18 @@ private command RenameVariable pVariableName
          end if
          put 0 into tLineCount
          
+         -- see if the variable already exists
+         local tAlreadyExists
+         filter tLocalScript with "*local*" & tNewName & "*" into tAlreadyExists         
+         if tAlreadyExists is not empty then
+            answer "variable" && tNewName && "already exists in this scope"
+            exit RenameVariable
+         end if
+         
          local tShouldProcessLine?
          local tLocalScope
          put removeBracketsInQuotesFrom(tLocalScript) into tLocalScript
+         
          repeat for each line tLine in tLocalScript
             put true into tShouldProcessLine?
             -- end of handler?
@@ -1739,7 +1754,7 @@ private command CopyOrMove pMode
    local tObjectID
    local tControlsList
    
-   put CurrentObject() into tObjectID
+   put CurrentObjectID() into tObjectID
    put ContextForCurrentLine() into tInsertionPoint
    -- get just the handler name
    put word 2 of tInsertionPoint into tHandler
@@ -1825,12 +1840,12 @@ private command SafeDelete pHandlerName
    else
       lock screen
       put ContextForCurrentLine() into tLinesToDelete
-      put CurrentObject() into tObject
+      put CurrentObjectID() into tObject
       set the itemDelimiter to comma
       put word 3 of tLinesToDelete into tStartLineNumber
       put word 4 of tLinesToDelete into tEndLineNumber
       delete line tStartLineNumber to tEndLineNumber of field kCodeField of group "Editor" of stack main
-      setSEDirtyFlagFor tObject
+      setSEDirtyFlagFor tObject, true
       unlock screen
    end if
 end SafeDelete
@@ -1912,7 +1927,7 @@ private function ContextForCurrentLine
    
    dispatch function "glx2IsInUse"
    if it is not "unhandled" and the result is true then
-      focus on field "code storage" of group "Editor" of stack "revGLX2 code"
+      focus on field kCodeField of group "Editor" of stack kGLX2
    else
       focus on field kCodeField of group "Editor" of stack "revNewScripteditor 1"
    end if
@@ -1933,7 +1948,7 @@ private function ScriptContextForLineNumber pSelectedLine
    
    -- if the script has been edited but not applied
    -- revavailablehandlers will return wrong information
-   put CurrentObject() into tObject
+   put CurrentObjectID() into tObject
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tHandler in tHandlerList
       -- check the start line
@@ -1977,7 +1992,6 @@ private function availableHandlersOf pObject
    end if
    
    put editor() into tEditors
-   
    repeat for each line tEditor in tEditors
       -- get a list of the objects being edited in all editors
       dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
@@ -2061,8 +2075,8 @@ private function availableHandlersOf pObject
                tHandler && \
                tHandlerArray[tHandler][tHandlerLine]["startline"] && \
                tHandlerArray[tHandler][tHandlerLine]["endline"] & cr after tHandlerList
-      end repeat
-   end repeat
+      end repeat -- for each key tHandlerLine in tHandlerArray[tHandler]
+   end repeat -- for each key tHandler in tHandlerArray
    sort lines of tHandlerList by word 1 of each
    sort lines of tHandlerList by word 2 of each
    -- cache the list for future use
@@ -2090,7 +2104,7 @@ private function WhereUsed pVariableName, pType, pReportLocally
    
    -- get list of objects and their scripts
    -- get the long id of the object we're working on
-   put CurrentObject() into tObjectID
+   put CurrentObjectID() into tObjectID
    -- get the stack metadata
    -- get the list of stacks and substacks
    try
@@ -2226,27 +2240,26 @@ end TestScriptForUse
 private command SetScript pScript, pObject
    local tSelectionPoint
    local tSavedDefaultStack
-   local tField, tEditor
+   local tEditor
    
    lock screen
    put the defaultstack into tSavedDefaultStack
+   if pObject is empty then
+      put CurrentObjectID() into pObject
+   end if
    #TODO: this returns a list of editors
    # if more than one is open, find the one editing pObject
    put editor() into tEditor
    set the defaultstack to tEditor
-   if pObject is empty then
-      put CurrentObject() into pObject
-   end if
    -- set undo restore point
    edit the script of pObject
    Undo.Push pObject
    try
       put the selectedChunk into tSelectionPoint
       StoreScrollsOfCard
-      put editorField() into tField
-      put pScript into field tField of group "Editor"
+      put pScript into field kCodeField of group "Editor"
       dispatch "scriptColorize" to group "Editor" of stack tEditor with "script"
-      setSEDirtyFlagFor pObject
+      setSEDirtyFlagFor pObject, true
       RestoreScrollsOfCard
       if tSelectionPoint is not empty then
          select after tSelectionPoint
@@ -2259,9 +2272,9 @@ private command SetScript pScript, pObject
    unlock screen
 end SetScript
 
-private command setSEDirtyFlagFor pObject
-   put CurrentObject() into pObject
-   dispatch "setDirty" to group "Editor" of stack main with pObject, true
+private command setSEDirtyFlagFor pObject, pIsDirty?
+   put CurrentObjectID() into pObject
+   dispatch "setDirty" to group "Editor" of stack editor() with pObject, pIsDirty?
    -- call this to fake out the dirty flag... otherwise it's not persistent
    -- this tells the textReplace handler to move nothing starting at char 1
    --
@@ -2277,7 +2290,7 @@ private function duplicateHandlers --pScript
    local tPreviousLine
    local tType
    
-   put CurrentObject() into tObject
+   put CurrentObjectID() into tObject
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tLine in tHandlerList
       if word 1 to 2 of tLine is word 1 to 2 of tPreviousLine then
@@ -2346,7 +2359,7 @@ private command FindOrphans pObject
    --logStartTime
    lock screen
    if pObject is empty then
-      put CurrentObject() into pObject
+      put CurrentObjectID() into pObject
    end if
    put scriptFromEditor() into tScript
    
@@ -2762,39 +2775,29 @@ end filteredScript
 
 local sEditObjects
 private command StoreScrollsOfCard
-   local tCard, tField
+   local tCard
    
    lock screen
    put the short name of this card into tCard
-   put editorField() into tField
-   put the vscroll of field tField of card tCard into sEditObjects["card"][tCard]["vScroll"]
-   put the hscroll of field tField of card tCard into sEditObjects["card"][tCard]["hScroll"]
+   put the vscroll of field kCodeField of group "Editor" of card tCard into sEditObjects["card"][tCard]["vScroll"]
+   put the hscroll of field kCodeField of group "Editor" of card tCard into sEditObjects["card"][tCard]["hScroll"]
    unlock screen
 end StoreScrollsOfCard
 
 private command RestoreScrollsOfCard
-   local tCard, tField
+   local tCard
    
    lock screen
    put the short name of this card into tCard
-   put editorField() into tField
-   set the vscroll of field tField of card tCard to sEditObjects["card"][tCard]["vScroll"]
-   set the hscroll of field tField of card tCard to sEditObjects["card"][tCard]["hScroll"]
-   dispatch "matchScrolls" to field tField of card tCard
+   set the vscroll of field kCodeField of group "Editor" of card tCard to sEditObjects["card"][tCard]["vScroll"]
+   set the hscroll of field kCodeField of group "Editor" of card tCard to sEditObjects["card"][tCard]["hScroll"]
+   dispatch "matchScrolls" to field kCodeField of group "Editor" of card tCard
    unlock screen
 end RestoreScrollsOfCard
 
-private function editorField
-   local tField
-   
-   dispatch function "glx2IsInUse"
-   if it is "handled" and the result is true then
-      put "code storage" into tField
-   else
-      put kCodeField into tField
-   end if
-   return tField
-end editorField
+--private function editorField
+--   return kCodeField
+--end editorField
 
 private function editor pObject
    local tEditors
@@ -2802,7 +2805,7 @@ private function editor pObject
    
    dispatch function "glx2IsInUse"
    if it is "handled" and the result is true then
-      put "revGLX2 code" into tEditors
+      put kGLX2 into tEditors
    else
       put revListScriptEditors() into tEditors
       repeat for each line tEditor in tEditors
@@ -3076,7 +3079,7 @@ end Undo.SetSavePointer
 private command Undo.Push pObject
    local tCount
    
-   put CurrentObject() into pObject
+   put CurrentObjectID() into pObject
    put the long id of pObject into pObject
    put Undo.Pointer(pObject, false)+1 into tCount
    Undo.Store pObject, tCount, compress(scriptFromEditor())
@@ -3097,7 +3100,7 @@ private command Undo.Pop pObject, pFunc
    
    lock screen
    -- retrieve the current pointer
-   put CurrentObject() into pObject
+   put CurrentObjectID() into pObject
    put the long id of pObject into pObject
    put Undo.Pointer(pObject, true) into tCount
    if tCount > 0 then
@@ -3113,6 +3116,9 @@ private command Undo.Pop pObject, pFunc
       if tSavedUndo is not empty then
          --dispatch pFunc to the target with pObject, tCount, tSavedUndo
          Undo.RestoreScript pObject, tCount, tSavedUndo
+         if tCount is 1 then
+            setSEDirtyFlagFor pObject, false
+         end if
          -- decrement the stack pointer
          Undo.SetPointer pObject, tCount-1
          put true into tSuccess
@@ -3149,7 +3155,7 @@ private command DoRedo pObject, pFunc
    put false into tSuccess?
    lock screen
    -- increment the stack pointer
-   put CurrentObject() into pObject
+   put CurrentObjectID() into pObject
    put Undo.Pointer(pObject, false)+2 into tCount
    put Undo.Retrieve(pObject, tCount) into tSavedUndo
    if tSavedUndo is empty then
@@ -3184,18 +3190,19 @@ private command Undo.RestoreScript pObject, tCount, pScript
    end if
 end Undo.RestoreScript
 
-private function CurrentObject --pCard
+private function CurrentObjectID --pCard
    local tObject
    
    dispatch function "glx2IsInUse"
    if it is "handled" and the result is true then
-      dispatch function "CurrentObject" to stack "revGLX2 code"
+      dispatch function "CurrentObjectID" to stack kGLX2
    else
       dispatch "getCurrentTab" to group "Script Tabs" of stack "revNewScriptEditor 1"
    end if
    -- NOTE: getCurrentTab returns the object reference as a rugged ID
    put the result into tObject
-end CurrentObject
+   return tObject
+end CurrentObjectID
 
 -- if the stackrunner is not being used, then ensure *something* works
 -- note that empty is true
