@@ -1,7 +1,7 @@
 Script "stack_revRefactor_card_id_1002"
 
 /*
-# Name: card "card id 1002" of stack "revRefactor"
+# Name: card "main" of stack "revRefactor"
 # ID: card id 1002 of stack "revRefactor"
 */
 

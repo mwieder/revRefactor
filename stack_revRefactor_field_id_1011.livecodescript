@@ -1,7 +1,7 @@
 Script "stack_revRefactor_field_id_1011"
 
 /*
-# Name: field "lblAbout" of card "card id 1002" of stack "revRefactor"
+# Name: field "lblAbout" of card "main" of stack "revRefactor"
 # ID: field id 1011 of card id 1002 of stack "revRefactor"
 */
 

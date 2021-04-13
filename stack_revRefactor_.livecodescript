@@ -186,7 +186,10 @@ end refactorSEName
 
 on revHookBuildScriptEditorContextMenu pObjectID, pSelectedText, @pText, @pModifiedText
    put generateRefactoringSubmenu() after pText
-   put  cr & "Go Back" & cr after line 1 of pText
+   -- if there's somewhere to go back to then
+   if sBreadCrumbs["count"] > 0 then
+      put  cr & "Go Back" after line 1 of pText
+   end if
    put pText into pModifiedText
    pass revHookBuildScriptEditorContextMenu
 end revHookBuildScriptEditorContextMenu
@@ -197,6 +200,8 @@ on revHookBuildScriptEditorMenu pMenuName, @pMenu, @pModifiedMenu
       if there is a stack kGLX2 then
          put pMenu into button "Edit" of stack kGLX2
       end if
+   else if pMenuName is "Help" then
+      put "Refactor help" after pMenu
    end if
    put pMenu into pModifiedMenu
    pass revHookBuildScriptEditorMenu
@@ -340,8 +345,7 @@ private command refactorMenuPick pWhich
       switch item 1 of pWhich
          case "Go Back"
             local tIndex, tDestination, tCount
-            --put word 2 of the selectedline into tIndex
-            --put the long id of CurrentObject() into tObject
+            
             put sBreadCrumbs["count"] into tCount
             put sBreadCrumbs[tCount]["line"] into tLine
             put sBreadCrumbs[tCount]["destination"] into tDestination
@@ -352,8 +356,10 @@ private command refactorMenuPick pWhich
                dispatch "revSEGoExecutionPoint" to stack main with tDestination, tLine, true, true
             end if
             break
+         case "Go to local definition"
          case "Go to definition"
             -- hijack Go to definition so we can record where we're going and where we've been
+            
             put word 2 of the selectedline into tLine
             put CurrentObjectID() into tObject
             dispatch function "seMatchingDefinitions" to stack main with tSelectedHandler, tObject
@@ -380,6 +386,12 @@ on revHookScriptEditorMenuPick pMenuName, pWhich
    switch pMenuName
       case "Edit"
          refactorMenuPick pWhich
+         break
+      case "Help"
+         if pWhich is "Refactor help" then
+            show stack "revRefactor"
+            go to card "main" of stack "revRefactor"
+         end if
          break
    end switch
    pass revHookScriptEditorMenuPick
@@ -2357,6 +2369,7 @@ private command FindOrphans pObject
    local tPutLine
    
    --logStartTime
+   set the cursor to busy
    lock screen
    if pObject is empty then
       put CurrentObjectID() into pObject
@@ -2378,6 +2391,7 @@ private command FindOrphans pObject
    -- find leftover "put <xyz>" and "put <xyz> into msg"
    put 1 into tLineNumber
    repeat for each line tLine in tScript
+      set the cursor to busy
       switch token 1 of tLine
          case "put"
             removeCommentsFrom tLine
@@ -3190,7 +3204,7 @@ private command Undo.RestoreScript pObject, tCount, pScript
    end if
 end Undo.RestoreScript
 
-private function CurrentObjectID --pCard
+private function CurrentObjectID
    local tObject
    
    dispatch function "glx2IsInUse"
