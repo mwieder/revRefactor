@@ -13,3 +13,7 @@ end revHookBuildScriptEditorMenu
 on revHookBuildScriptEditorContextMenu pObjectID, pSelectedText, pText, @pModifiedText
    breakpoint
 end revHookBuildScriptEditorContextMenu
+
+on mouseUp
+   launch url "http://www.fourthworld.com/embassy/articles/scriptstyle.html"
+end mouseUp

@@ -1,20 +1,21 @@
-Script "stack_revRefactor_card_id_1119"
+Script "stack_revRefactor_card_id_1578"
 
 /*
-# Name: card "Orphans" of stack "revRefactor"
-# ID: card id 1119 of stack "revRefactor"
+# Name: card "RenamedVariables" of stack "revRefactor"
+# ID: card id 1578 of stack "revRefactor"
 */
 
 
+constant kOrphanField = "fldOrphanList"
+constant kOKButton = "Button_1"
+constant kUndeclaredButton = "btnUndeclared"
+constant kDuplicatesButton = "btnGlobals"
+constant kScripLocalsButton = "btnScriptLocals"
+constant kParamsButton = "btnParams"
+constant kConstantsButton = "btnConstants"
+
 on resizeStack
    local tRect
-   constant kOrphanField = "fldOrphanList"
-   constant kOKButton = "Button_1"
-   constant kUndeclaredButton = "btnUndeclared"
-   constant kDuplicatesButton = "btnDupes"
-   constant kOrphansButton = "btnOrphans"
-   constant kParamsButton = "btnParams"
-   constant kHandlersButton = "btnHandlers"
    
    lock screen
    put the rect of field kOrphanField into tRect
@@ -30,12 +31,12 @@ on resizeStack
    
    set the bottom of button kParamsButton to the bottom of this card - 20
    set the left of button kParamsButton to the right of button kUndeclaredButton + 5
-   set the bottom of button kHandlersButton to the bottom of this card - 20
-   set the left of button kHandlersButton to the right of button kParamsButton
+   set the bottom of button kConstantsButton to the bottom of this card - 20
+   set the left of button kConstantsButton to the right of button kParamsButton
    set the bottom of button kDuplicatesButton to the bottom of this card - 20
-   set the left of button kDuplicatesButton to the right of button kHandlersButton
-   set the bottom of button kOrphansButton to the bottom of this card - 20
-   set the left of button kOrphansButton to the right of button kDuplicatesButton
+   set the left of button kDuplicatesButton to the right of button kConstantsButton
+   set the bottom of button kScripLocalsButton to the bottom of this card - 20
+   set the left of button kScripLocalsButton to the right of button kDuplicatesButton
    
    unlock screen
 end resizeStack
@@ -70,13 +71,12 @@ end ShowAllLines
 command HandleOptions
    lock screen
    ShowAllLines
-   ShowOrHide the hilite of button "btnParams", "unused parameter"
-   ShowOrHide the hilite of button "btnDupes", "duplicate"
-   ShowOrHide the hilite of button "btnHandlers", "unused function"
-   ShowOrHide the hilite of button "btnHandlers", "unused command"
-   ShowOrHide the hilite of button "btnHandlers", "unused getprop"
-   ShowOrHide the hilite of button "btnHandlers", "unused setprop"
-   ShowOrHide the hilite of button "btnOrphans", "orphan"
+   ShowOrHide the hilite of button kParamsButton, "parameter"
+   ShowOrHide the hilite of button kDuplicatesButton, "global"
+   ShowOrHide the hilite of button kScripLocalsButton, "local"
+   --ShowOrHide the hilite of button kConstantsButton, "handler local variable"
+   ShowOrHide the hilite of button kConstantsButton, "constant"
+   ShowOrHide the hilite of button kUndeclaredButton, "undeclared variable"
    unlock screen
 end HandleOptions
 

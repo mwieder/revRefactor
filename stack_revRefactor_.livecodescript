@@ -24,10 +24,11 @@ Script "stack_revRefactor_"
 * licensing per the About box
 *
 * public handlers here:
-* activateGLX2se
-* activateIDEse
+* activateGLX2se : use the glx2 script editor
+* activateIDEse : use the LiveCode IDE script editor
 * refactorSEName
 *
+* this set of commands builds the menus and selects menuItems from them
 * revHookBuildScriptEditorMenu
 * revHookScriptEditorMenuPick
 * revHookBuildScriptEditorContextMenu
@@ -114,6 +115,10 @@ Script "stack_revRefactor_"
 * this resulted in being able to remove the cruft from the revHook message handlers
 2019.07.28 mdw
 * Add Documentation got the parameter list wrong for private handlers.
+2022.11.22 mdw
+* removed busy cursor from findOrphans for speed.
+2022.11.26 mdw
+* ensureNamingConvention reports proper line numbers for local variables
 */
 
 /*
@@ -136,6 +141,8 @@ end mouseUp
 
 */
 
+local kDebugLog? = true
+
 -- some fake constants
 -- because rValues can't be expressions
 constant kCodeField = "Script"
@@ -154,7 +161,11 @@ local sTime # used for timing handlers here
 constant kNotImplemented = "Not yet implemented. Coming Real Soon Now"
 constant kThisScript = "This script only"
 constant kKeywords = "end,private,on,command,function,getProp,setProp,before,after"
+constant kMessageNames = "item,url,msg,regex,back,front,char,each,line,word"
+constant kContainerNames = "stack,card,cd,button,btn,field,fld,scrollbar,sb,image,img,graphic,grc,group,gp,player,widget"
 constant self = "revRefactor"
+
+constant kNamingConvention = true
 
 local sNewParamsArray
 local sScriptArray
@@ -177,16 +188,21 @@ private command fillFakeConstants
    put numtochar(7) into kQuote
 end fillFakeConstants
 
--- getter function to retrieve the name of the current script editor
+# getter function to retrieve the name of the current script editor
 function refactorSEName
    return main
 end refactorSEName
 
 --> IDE editor menu functions
 
+/*
+* These two commands generate the menus to show the Refactor commands
+* revHookBuildScriptEditorContextMenu generates the control-dropdown menu
+* revHookBuildScriptEditorMenu generates the menuBar menu items
+*/
 on revHookBuildScriptEditorContextMenu pObjectID, pSelectedText, @pText, @pModifiedText
    put generateRefactoringSubmenu() after pText
-   -- if there's somewhere to go back to then
+   # if there's somewhere to go back to then
    if sBreadCrumbs["count"] > 0 then
       put  cr & "Go Back" after line 1 of pText
    end if
@@ -239,6 +255,7 @@ private function generateRefactoringSubmenu
    put tab & tab & "Function" & cr after tAddedText
    put tab & kMenuItemFindOrphans & cr after tAddedText
    put tab & kMenuItemUndoLast & cr after tAddedText
+   put tab & "Ensure Naming Convention" & cr after tAddedText
    return tAddedText
 end generateRefactoringSubmenu
 
@@ -306,10 +323,10 @@ private command refactorMenuPick pWhich
                renameVariable tSelectedText
                break
             case "Add Test"
-               AddTestAtLine --the selectedline
+               AddTestAtLine # the selectedline
                break
             case "Add Documentation"
-               AddDocsAtLine --the selectedline
+               AddDocsAtLine # the selectedline
                break
             case "Code quality"
                put CurrentObjectID() into tObject
@@ -322,6 +339,9 @@ private command refactorMenuPick pWhich
                put CurrentObjectID() into tObject
                Undo.Pop tObject
                --setSEDirtyFlagFor tObject, false
+               break
+            case "Ensure Naming Convention"
+               EnsureNamingConvention
                break
             default
                throw kNotImplemented
@@ -358,7 +378,7 @@ private command refactorMenuPick pWhich
             break
          case "Go to local definition"
          case "Go to definition"
-            -- hijack Go to definition so we can record where we're going and where we've been
+            # hijack Go to definition so we can record where we're going and where we've been
             
             put word 2 of the selectedline into tLine
             put CurrentObjectID() into tObject
@@ -421,19 +441,19 @@ private function scriptFromEditor pObject
    return tReturnValue
 end scriptFromEditor
 
-private command CreateGetterAndSetterFor pVariableName
+private command createGetterAndSetterFor pVariableName
    local tScript
    
    put scriptFromEditor() into tScript
    insertGetterAndSetter pVariableName, tScript
    ConvertLocalVariableToScriptLocal pVariableName, tScript
    SetScript tScript
-end CreateGetterAndSetterFor
+end createGetterAndSetterFor
 
 /**
 * ConvertLiteralToConstant
 */
-private command ConvertLiteralToConstant pLiteral
+private command convertLiteralToConstant pLiteral
    local tScript
    local tLineToInsert
    local tConstant
@@ -442,7 +462,7 @@ private command ConvertLiteralToConstant pLiteral
    local tObject
    
    put false into tSuccess?
-   -- select the whole word
+   # select the whole word
    if pLiteral is a number then
       click at the selectedLoc
       put the clickText into pLiteral
@@ -453,10 +473,10 @@ private command ConvertLiteralToConstant pLiteral
    put CurrentObjectID() into tObject
    put scriptFromEditor() into tScript
    
-   -- find line for insertion
+   # find line for insertion
    put InsertionPoint(tScript) into tInsertionPoint
    
-   -- create constant
+   # create constant
    put pLiteral into tConstant
    replace quote with empty in tConstant
    replace space with "_" in tConstant
@@ -477,7 +497,7 @@ private command ConvertLiteralToConstant pLiteral
    put word 2 of the clickline into tLine
    replace pLiteral with tConstant in line tLine of tScript
    
-   -- insert tLineToInsert at insertion point
+   # insert tLineToInsert at insertion point
    if tInsertionPoint is not 0 then
       put tLineToInsert before line tInsertionPoint of tScript
       SetScript tScript, tObject
@@ -486,12 +506,12 @@ private command ConvertLiteralToConstant pLiteral
       Undo.Pop tObject, "Undo.RestoreScript"
    end if
    return tSuccess?
-end ConvertLiteralToConstant
+end convertLiteralToConstant
 
 /**
 * ConvertGlobalToLocal
 */
-private command ConvertGlobalTo pVariableName, pType
+private command convertGlobalTo pVariableName, pType
    local tType
    local tScript, tGlobalScript
    local tObject
@@ -505,17 +525,17 @@ private command ConvertGlobalTo pVariableName, pType
    
    put CurrentObjectID() into tObject
    put scriptFromEditor() into tScript
-   -- see if the global was declared
+   # see if the global was declared
    put filteredScript("global *" & pVariableName & "*", tScript) into tGlobalScript
    
    if tGlobalScript is not empty then
-      -- remove global declarations
+      # remove global declarations
       do "global" && pVariableName & ";delete variable" && pVariableName
       if tType is not "Cancel" then
          set the itemdelimiter to comma
          switch tType
             case "this handler only"
-               -- find start of handler + 1
+               # find start of handler + 1
                addLocalVariableToHandler pVariableName, tScript
                break
                
@@ -525,18 +545,18 @@ private command ConvertGlobalTo pVariableName, pType
                repeat for each line tLine in tGlobalScript
                   RemoveDeclaration pVariableName, "global", tLine, 0, tScript
                end repeat
-               -- find line for insertion
+               # find line for insertion
                insertAtStartOfScript "local" && pVariableName, tScript
                break
             case kMenuSubItemToProperty
                ConvertLocalVariableTo pVariableName, kMenuSubItemToProperty
                exit ConvertGlobalTo
                break
-         end switch -- scope of global
+         end switch # scope of global
          SetScript tScript, tObject
       end if
    end if
-end ConvertGlobalTo
+end convertGlobalTo
 
 private command addLocalVariableToHandler pVariableName, @pScript
    local tInsertionPoint
@@ -565,14 +585,14 @@ command declareLocalVariable pVariableName
    SetScript tScript, CurrentObjectID()
 end declareLocalVariable
 
-private command RemoveDeclaration pVariableName, pType, pLine, pOffset, @pScript
+private command removeDeclaration pVariableName, pType, pLine, pOffset, @pScript
    local tLinePos
    local tLine, tReplacedLine
    constant kTypes = "global,local"
    
-   -- TODO: See if it's safe to delete the declaration
-   -- by seeing if it's used anywhere else
-   -- this includes globals and script locals
+   # TODO: See if it's safe to delete the declaration
+   # by seeing if it's used anywhere else
+   # this includes globals and script locals
    put lineoffset(pLine, pScript, pOffset) into tLinePos
    put line tLinePos of pScript into tLine
    set the itemdelimiter to comma
@@ -594,7 +614,7 @@ private command RemoveDeclaration pVariableName, pType, pLine, pOffset, @pScript
       end if
    end if
    return pScript
-end RemoveDeclaration
+end removeDeclaration
 
 private function regexWholeWordFrom pWord
    return "\b" & pWord & "\b"
@@ -607,7 +627,7 @@ end regexWholeWordFrom
 *  parameter of the containing handler
 *  property
 */
-private command ConvertLocalVariableTo pVariableName, pType
+private command convertLocalVariableTo pVariableName, pType
    local tType
    local tScript
    local tLocalScript, tLocalScriptArray
@@ -628,46 +648,46 @@ private command ConvertLocalVariableTo pVariableName, pType
       set the itemdelimiter to comma
       switch tType
          case kMenuSubItemToScriptLocal
-            -- see if the variable was declared
+            # see if the variable was declared
             put filteredScript("local *" & pVariableName & "*", tScript) into tLocalScriptArray
             put tLocalScriptArray into tLocalScript
-            -- no local declaration
+            # no local declaration
             if tLocalScript is empty then
                if filteredScript("global *" & pVariableName & "*", tScript) is empty then
                   Undo.Pop tObject, "Undo.RestoreScript"
                   insertAtStartOfScript "local" && pVariableName, tScript
                else
-                  -- convert the local global to a script local
+                  # convert the local global to a script local
                   ConvertLocalVariableToScriptLocal pVariableName, tScript
                end if
             else
-               -- already declared, so there's more work to do
+               # already declared, so there's more work to do
                ConvertLocalVariableToScriptLocal pVariableName, tScript
             end if
             break
          case kMenuSubItemToParameter
             local tWordCount
             
-            -- find start of handler
+            # find start of handler
             put ContextForCurrentLine() into tInsertionPoint
             put word 3 of tInsertionPoint into tStartLineNumber
             put word 4 of tInsertionPoint into tEndLineNumber
             put line tStartLineNumber+1 to tEndLineNumber of tScript into tLocalScript
             
-            -- ensure the parameter does not already exist
+            # ensure the parameter does not already exist
             put 2 into tWordCount
             if pVariableName is not among the words of line tStartLineNumber of tScript then
                if word 1 of line tStartLineNumber of tScript is "private" then
                   add 1 to tWordCount
                end if
-               -- see if there are already any parameters
+               # see if there are already any parameters
                if the number of words in line tStartLineNumber of tScript > tWordCount then
                   put comma after line tStartLineNumber of tScript
                end if
                put space & pVariableName after line tStartLineNumber of tScript
             end if
             if variableIsInHandler?(pVariableName, tLocalScript) is false then
-               -- must be script-local, so grab the whole script
+               # must be script-local, so grab the whole script
                put tScript into tLocalScript
                put 0 into tStartLineNumber
                put -1 into tEndLineNumber
@@ -691,15 +711,15 @@ private command ConvertLocalVariableTo pVariableName, pType
                set the wholematches to true
                local tLines
                put the number of lines in tScript into tLines
-               -- find start of handler
+               # find start of handler
                put ContextForCurrentLine() into tInsertionPoint
                put word 3 of tInsertionPoint into tStartLineNumber
                put word 4 of tInsertionPoint into tEndLineNumber
                put line tStartLineNumber+1 to tEndLineNumber of tScript into tLocalScript
-               -- see if we're dealing with a script-local or handler-local variable
-               -- see if it's in the current handler
+               # see if we're dealing with a script-local or handler-local variable
+               # see if it's in the current handler
                if variableIsInHandler?(pVariableName, tLocalScript) is false then
-                  -- must be script-local, so grab the whole script
+                  # must be script-local, so grab the whole script
                   put tScript into tLocalScript
                   put 0 into tStartLineNumber
                   put -1 into tEndLineNumber
@@ -709,7 +729,7 @@ private command ConvertLocalVariableTo pVariableName, pType
                   switch word 1 of tLine
                      case "end"
                         if char 1 to 3 of tLine is "end" then
-                           -- at end of current handler
+                           # at end of current handler
                            if tStartLineNumber is not zero then
                               exit repeat
                            end if
@@ -720,7 +740,7 @@ private command ConvertLocalVariableTo pVariableName, pType
                         if pVariableName is in tLine then
                            RemoveDeclaration pVariableName, word 1 of tLine, tLine, 0, tLocalScript
                            insertText tLocalScript, tStartLineNumber, tEndLineNUmber, tScript
-                           -- see if we deleted a line; adjust the line count if so
+                           # see if we deleted a line; adjust the line count if so
                            if the number of lines in tScript < tLines then
                               put the number of lines in tScript into tLines
                               subtract 1 from tLineCount
@@ -742,10 +762,10 @@ private command ConvertLocalVariableTo pVariableName, pType
                exit ConvertLocalVariableTo
             end if
          default
-      end switch -- tType
+      end switch # tType
       SetScript tScript, tObject
-   end if -- tType is "Cancel"
-end ConvertLocalVariableTo
+   end if # tType is "Cancel"
+end convertLocalVariableTo
 
 private command insertText pText, pStartLineNumber, pEndLineNUmber, @pScript
    put pText into line pStartLineNumber+1 to pEndLineNumber of pScript
@@ -757,7 +777,7 @@ private command insertGetterAndSetter pVar, @pScript
    constant kGetter = "function [[pVar]][[kCRLF]][[kTAB]]return [[pVar]][[kCRLF]]end [[pVar]][[kCRLF]]"
    constant kSetter = "command set[[pVar]]To pValue [[kCRLF]][[kTAB]]put pValue into [[pVar]][[kCRLF]]end set[[pVar]]To[[kCRLF]]"
    
-   -- set up the fake constants bc we can't have that kind of constant in LC
+   # set up the fake constants bc we can't have that kind of constant in LC
    put crlf into kCRLF
    put tab into kTAB
    insertAtStartOfScript merge(kSetter), pScript
@@ -765,7 +785,7 @@ private command insertGetterAndSetter pVar, @pScript
 end insertGetterAndSetter
 
 private function variableIsInHandler? pVariableName, pScript
-   -- see if it's in the current handler
+   # see if it's in the current handler
    filter pScript with "*local *" & pVariableName & "*"
    return pScript is not empty
 end variableIsInHandler?
@@ -784,7 +804,7 @@ end globalIsInHandler?
 *
 * At this point we know the variable is already declared somewhere
 */
-private command ConvertLocalVariableToScriptLocal pVariableName, @pScript
+private command convertLocalVariableToScriptLocal pVariableName, @pScript
    local tInsertionPoint
    local tStartLineNumber, tEndLineNumber
    local tLocalScript
@@ -796,7 +816,7 @@ private command ConvertLocalVariableToScriptLocal pVariableName, @pScript
    
    if variableIsInHandler?(pVariableName, tLocalScript) is false \
          and globalIsInHandler?(pVariableName, tLocalScript) is false then
-      -- must be script-local, so grab the whole script
+      # must be script-local, so grab the whole script
       put pScript into tLocalScript
       put 0 into tStartLineNumber
       put -1 into tEndLineNumber
@@ -815,25 +835,25 @@ private command ConvertLocalVariableToScriptLocal pVariableName, @pScript
          end switch
       end repeat
    end if
-end ConvertLocalVariableToScriptLocal
+end convertLocalVariableToScriptLocal
 
-private command ConvertVariableToProperty pVariableName, pObject, @pScriptLine
+private command convertVariableToProperty pVariableName, pObject, @pScriptLine
    constant kSet = "set the [[pVariableName]] of [[pObject]] to"
    
-   if "put" is word 1 of pScriptLine and pVariablename is word -1 of pScriptLine then
+   if "put" is word 1 of pScriptLine and pVariableName is word -1 of pScriptLine then
       put merge(kSet) into word 1 of pScriptLine
       delete word -2 to -1 of pScriptLine
    else
       put replacetext(pScriptLine, "(?i)"& regexWholeWordFrom(pVariableName), "the" && pVariableName && "of" && pObject) into pScriptLine
    end if
    return pScriptLine
-end ConvertVariableToProperty
+end convertVariableToProperty
 
 /**
 * ChangeSignature
 * change the order and/or number of parameters
 */
-private command ChangeSignature --pContextText
+private command changeSignature
    local tList
    local tScript
    local tInsertionPoint
@@ -846,7 +866,7 @@ private command ChangeSignature --pContextText
    local tType
    local x
    
-   -- see if it's a command or function
+   # see if it's a command or function
    put HandlerType() into tType
    put scriptFromEditor() into tScript
    set the itemDelimiter to comma
@@ -869,24 +889,24 @@ private command ChangeSignature --pContextText
    end if
    put word 2 of tLine into tHandlerName
    
-   -- put the parameter locations in an array
-   -- whose keys are the parameters
+   # put the parameter locations in an array
+   # whose keys are the parameters
    put OriginalParams(tLine) into tParamsArray
    
    ask "Edit Signature" with line tStartLineNumber of tScript
    if it is not empty and it is not line tStartLineNumber of tScript then
       put it into tNewSignature
-      -- if it's a private handler there's no need to check other scripts
+      # if it's a private handler there's no need to check other scripts
       if word 1 of tLine is not "private" then
          put WhereUsed(tHandlerName, tType) into tList
       end if
-      -- adjust this script to start with
+      # adjust this script to start with
       ChangeSignatureInEditorScript tStartLineNumber, tEndLineNumber, tHandlerName, tNewSignature, tParamsArray, tScript
       SetScript tScript
       if tList is empty then
-         -- this script only
+         # this script only
       else
-         -- WhereUsed() returned list of other scripts where used
+         # WhereUsed() returned list of other scripts where used
          repeat for each line tObject in tList
             put the script of tObject into tScript
             if word 1 of tNewSignature is "private" then
@@ -902,17 +922,17 @@ private command ChangeSignature --pContextText
          end repeat
       end if
    else
-      -- user wants to cancel, not change signature
+     # user wants to cancel, not change signature
    end if
-end ChangeSignature
+end changeSignature
 
-private function OriginalParams pLine
+private function originalParams pLine
    local tOldParams
    local tParamsArray
    local x
    
-   -- put the parameter locations in an array
-   -- whose keys are the parameters
+   # put the parameter locations in an array
+   # whose keys are the parameters
    set the itemdelimiter to comma
    put word 3 to -1 of pLine into tOldParams
    put token 1 to -1 of tOldParams into tOldParams
@@ -920,7 +940,7 @@ private function OriginalParams pLine
       put x into tParamsArray[word 1 of item x of tOldParams]
    end repeat
    return tParamsArray
-end OriginalParams
+end originalParams
 
 /**
 * ChangeSignatureInEditorScript
@@ -928,7 +948,7 @@ end OriginalParams
 * Change the command or function declaration,
 * then call ChangeSignatureInScript to change calls to the handler
 */
-private command ChangeSignatureInEditorScript pStartLineNumber, pEndLineNumber, pHandlerName, pNewSignature, pParamsArray, @pScript
+private command changeSignatureInEditorScript pStartLineNumber, pEndLineNumber, pHandlerName, pNewSignature, pParamsArray, @pScript
    local tNewHandlerName
    local tParamOffset
    local tIsPrivate
@@ -943,7 +963,7 @@ private command ChangeSignatureInEditorScript pStartLineNumber, pEndLineNumber, 
    put CurrentObjectID() into tObject
    delete variable sNewParamsArray
    
-   -- replace the handler declaration itself
+   # replace the handler declaration itself
    put pNewSignature into line pStartLineNumber of pScript
    put 3 into tParamOffset
    if word 1 of pNewSignature is "private" then
@@ -951,19 +971,19 @@ private command ChangeSignatureInEditorScript pStartLineNumber, pEndLineNumber, 
       delete word 1 of pNewSignature
    end if
    put word 2 of pNewSignature into tNewHandlerName
-   -- change the end of the declaration
+   # change the end of the declaration
    replace pHandlerName with tNewHandlerName in line pEndLineNumber of pScript
    
-   -- gather the parameter positions list
+   # gather the parameter positions list
    put 1 into x
    put word tParamOffset to -1 of pNewSignature into tParameters
    repeat for each item tParameter in tParameters
-      -- see if the parameter is in the old list
+      # see if the parameter is in the old list
       put pParamsArray[word 1 of tParameter] into tOldPosition
       if tOldPosition is not empty then
-         -- tNewParamsArray is a transposition array
-         -- whose keys are the new position
-         -- and values are the old position
+         # tNewParamsArray is a transposition array
+         # whose keys are the new position
+         # and values are the old position
          put tOldPosition into sNewParamsArray[x]
       else
          put numtochar(3) & word 1 of tParameter into sNewParamsArray[x]
@@ -971,37 +991,37 @@ private command ChangeSignatureInEditorScript pStartLineNumber, pEndLineNumber, 
       add 1 to x
    end repeat
    
-   -- now change all calls to this handler
+   # now change all calls to this handler
    ChangeSignatureInScript pHandlerName, tNewHandlerName, sNewParamsArray, pScript
-end ChangeSignatureInEditorScript
+end changeSignatureInEditorScript
 
 /**
 * ChangeSignatureInScript
 *
 * Change calls to the handler
 */
-private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParamsArray, @pScript
+private command changeSignatureInScript pHandlerName, pNewHandlerName, pNewParamsArray, @pScript
    local tReplacement
    local tTestParameters
    local tTestScript
    local tOffset
    local tLineNumber, tLineNumbers
-   local tFuncParams -- true if ther is a function call on the current line
+   local tFuncParams # true if ther is a function call on the current line
    local tNewNumParameters
    local tOldNumParameters
    local tParams
-   local tEndOfOldParameters -- note: this will be 0 if there are no original parameters
+   local tEndOfOldParameters # note: this will be 0 if there are no original parameters
    
    set the itemDelimiter to comma
    set the wholematches to true
-   -- replace parameters with actuals
+   # replace parameters with actuals
    put 1 into tLineNumber
    put empty into tParams
    put pScript into tTestScript
    repeat for each line tTestLine in tTestScript
       put false into tFuncParams -- not a function until we say so
       
-      -- allow for line continuations
+      # allow for line continuations
       local tLineNumberEnd
       put tLineNumber into tLineNumbers
       put tLineNumber into tLineNumberEnd
@@ -1013,23 +1033,23 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
          put " to" && tLineNumberEnd after tLineNumbers
       end if
       
-      -- see if the word we're replacing is in this line
-      -- this fails to match doSomething with "doSomething"
+      # see if the word we're replacing is in this line
+      # this fails to match doSomething with "doSomething"
       --put wordoffset(pHandlerName, tTestLine) into tOffset
-      -- so we have to do this instead
+      # so we have to do this instead
       put offset(pHandlerName, tTestLine) into tOffset
       
-      -- if the handler we're replacing is in this line then
+      # if the handler we're replacing is in this line then
       if tOffset > 0 then
-         -- see if there is a function call on this line
+         # see if there is a function call on this line
          local tParenOffset
          put offset("(", tTestLine) into tParenOffset
          if tParenOffset > 0 then
-            -- get the function parameters in the current line
+            # get the function parameters in the current line
             put matchtext(tTestLine, "\((.*)\)", tTestParameters) into tFuncParams
             put length(tTestParameters) into tEndOfOldParameters
          else
-            -- command, not function
+            # command, not function
             put offset(char -1 of token -1 of tTestLine, tTestLine)+1 into tEndOfOldParameters
          end if
          
@@ -1050,7 +1070,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                put tParams into tTestParameters
                put true into tShouldHandleThis
                break
-            case pHandlerName -- handler is first word in line
+            case pHandlerName # handler is first word in line
                if tParenOffset is 0 or tOffset < tParenOffset then
                   put true into tShouldHandleThis
                   put word 2 to -1 of tTestLine into tParams
@@ -1069,40 +1089,40 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
          
          if tShouldHandleThis then
             if word 1 of tTestLine is not in kKeywords then
-               -- get the parameters of the line we're substituting into
-               -- is this a function call?
+               # get the parameters of the line we're substituting into
+               # is this a function call?
                if tParenOffset > 0 then
                else
-                  -- not a function call, get the command parameters
+                  # not a function call, get the command parameters
                end if
                
                put the number of items in tTestParameters into tOldNumParameters
                
-               -- replace the handler name
+               # replace the handler name
                put DoReplace(tTestLine, pHandlerName, pNewHandlerName) into tTestLine
                put tTestLine into line tLineNumber of pScript
                
-               -- enable this test to leave func() (no parameters) intact
+               # enable this test to leave func() (no parameters) intact
                --if tEndOfOldParameters > 0 then
                if word 1 of tTestLine is not in "exit" then
                   
-                  -- replace the parameters
-                  -- use whichever of tOldNumParameters or tNewNumParameters is bigger
+                  # replace the parameters
+                  # use whichever of tOldNumParameters or tNewNumParameters is bigger
                   put the number of elements in pNewParamsArray into tNewNumParameters
                   if tNewNumParameters < tOldNumParameters then
                      put tOldNumParameters into tNewNumParameters
                   end if
                   
                   repeat with tOriginalindex=1 to tNewNumParameters
-                     -- see if the parameter is in both old and new lists
-                     -- tOriginalindex is the item index into the original parameters,
-                     -- tNewParamsArray[tOriginalindex] will have the new location
+                     # see if the parameter is in both old and new lists
+                     # tOriginalindex is the item index into the original parameters,
+                     # tNewParamsArray[tOriginalindex] will have the new location
                      if pNewParamsArray[tOriginalindex] is a number then
-                        -- it is, so index into the parameters of the current line
-                        -- grab that parameter, and use it
+                        # it is, so index into the parameters of the current line
+                        # grab that parameter, and use it
                         put item pNewParamsArray[tOriginalindex] of tTestParameters into tReplacement
                      else
-                        -- delete the kReference from the beginning
+                        # delete the kReference from the beginning
                         put pNewParamsArray[tOriginalindex] into tReplacement
                         if char 1 of tReplacement is numtochar(3) then
                            delete char 1 of tReplacement
@@ -1110,7 +1130,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                      end if
                      
                      put tReplacement into item tOriginalIndex of tParams
-                  end repeat -- with tOriginalindex=1 to tNewNumParameters
+                  end repeat # with tOriginalindex=1 to tNewNumParameters
                   chopIf comma, tParams
                   if char 1 of tParams is comma then
                      put "pUndelcaredParameter" before tParams
@@ -1118,13 +1138,13 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                   
                   local tReplacementPosition, tEndpoint
                   put length(pNewHandlerName) + tOffset into tReplacementPosition
-                  -- differentiate between a function and a command
+                  # differentiate between a function and a command
                   if tFuncParams then
                      put tReplacementPosition+tEndOfOldParameters into tEndpoint
                      add 1 to tReplacementPosition
                      put tParams into char tReplacementPosition to tEndpoint of line tLineNumber of pScript
                   else
-                     -- cover the case where there's just a command with no orig parameters
+                     # cover the case where there's just a command with no orig parameters
                      if tOldNumParameters < 1 then
                         put space before tParams
                      end if
@@ -1139,7 +1159,7 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                               delete word 1 of tTokens
                            end if
                            put word 2 of tTokens into tTokens
-                           -- don't change call parameters
+                           # don't change call parameters
                            break
                         case "dispatch"
                            put tTestParameters into tTokens
@@ -1148,24 +1168,23 @@ private command ChangeSignatureInScript pHandlerName, pNewHandlerName, pNewParam
                            put tTestParameters into tTokens
                      end switch
                      put DoReplace(tTestLine, tTokens, tParams) into line tLineNumber of pScript
-                  end if -- tFuncParams
+                  end if # tFuncParams
                   
-               end if --  word 1 of tTestLine is not in "exit"
-               --end if -- tEndOfOldParameters > 0
+               end if #  word 1 of tTestLine is not in "exit"
             end if
-         else -- tOffset > tParenOffset
-         end if -- word 1 of tTestLine is not in kKeywords
-      end if -- (tOffset < tParenOffset) or (tParenOffset is 0)
+         else # tOffset > tParenOffset
+         end if # word 1 of tTestLine is not in kKeywords
+      end if # (tOffset < tParenOffset) or (tParenOffset is 0)
       add 1 to tLineNumber
    end repeat
-end ChangeSignatureInScript
+end changeSignatureInScript
 
 /**
 * Extract
 *
 * extract the given block of text to a new command or function
 */
-private command Extract pText, pType
+private command extract pText, pType
    local tHandler
    local tScript
    
@@ -1178,14 +1197,14 @@ private command Extract pText, pType
       if it is not empty then
          put it into tHandler
          put scriptFromEditor() into tScript
-         -- replace the calls to the new handler
+         # replace the calls to the new handler
          if pType is "Function" then
             put DoReplace(tScript, pText, tHandler & "()" & cr ) into tScript
          else
             put DoReplace(tScript, pText, tHandler & cr ) into tScript
          end if
          
-         -- now put the handler at the end of the script
+         # now put the handler at the end of the script
          put cr & pType && tHandler & cr \
                & pText & cr after tScript
          if pType is "Function" then
@@ -1195,7 +1214,7 @@ private command Extract pText, pType
          SetScript tScript
       end if
    end if
-end Extract
+end extract
 
 constant kLineStarters = "private,on,command,function,after,before,getProp,setProp"
 
@@ -1205,7 +1224,7 @@ constant kLineStarters = "private,on,command,function,after,before,getProp,setPr
 * Add a test for the given handler
 * in a file in the same directory as the stack being edited
 */
-private command AddTestAtLine --pSelectedLine
+private command addTestAtLine --pSelectedLine
    local tScript, tFilteredScript
    local tLineNumber, tObjectNumber
    local tFunctionLine
@@ -1219,7 +1238,7 @@ private command AddTestAtLine --pSelectedLine
    
    put CurrentObjectID() into tPathName
    put the long id of tPathName into tPathName
-   -- get just the stack name
+   # get just the stack name
    put "stack" && word -1 of tPathName into tFileName
    if the filename of tFileName is empty then
       answer "you need to save the stack first"
@@ -1249,7 +1268,7 @@ private command AddTestAtLine --pSelectedLine
       end if
       
       # get the path url to the stack being edited
-      -- get just the stack name
+      # get just the stack name
       put word -1 of tPathName into tFileName
       set the itemdelimiter to "/"
       put item -1 of tFileName into tStackName
@@ -1257,7 +1276,7 @@ private command AddTestAtLine --pSelectedLine
       replace quote with empty in tFileName
       
       put GenerateTestFor(tFunctionType, tFunction, tParameters) into tGeneratedTest
-      -- open or create the test file
+      # open or create the test file
       if there is a file tFileName then
          put url("file:" & tFileName) into tFileContents
          
@@ -1297,7 +1316,7 @@ private command AddTestAtLine --pSelectedLine
       if the result is not empty then
          put "file open error:" && the result & cr after msg
       else
-         -- append tGeneratedTest to the end of the test file
+         # append tGeneratedTest to the end of the test file
          write tGeneratedTest to file tFileName
          if the result is not empty then
             put "file write error:" && the result & cr after msg
@@ -1308,9 +1327,9 @@ private command AddTestAtLine --pSelectedLine
    end if # word 1 of tFunctionLine is in kLineStarters
    unlock screen
    return 0
-end AddTestAtLine
+end addTestAtLine
 
-private function NextObjectNumber pFileContents
+private function nextObjectNumber pFileContents
    local tLastObjectNumber
    
    filter pFileContents with "local kObject*"
@@ -1320,7 +1339,7 @@ private function NextObjectNumber pFileContents
       add 1 to tLastObjectNumber
    end if
    return tLastObjectNumber
-end NextObjectNumber
+end nextObjectNumber
 
 /**
 * NextTestNumber
@@ -1330,7 +1349,7 @@ end NextObjectNumber
 * returns
 *  tLastHandler
 */
-private function NextTestNumber pFunction, pFileContents
+private function nextTestNumber pFunction, pFileContents
    local tFindDupes
    local tLastHandler
    
@@ -1342,9 +1361,9 @@ private function NextTestNumber pFunction, pFileContents
       add 1 to tLastHandler
    end if
    return tLastHandler
-end NextTestNumber
+end nextTestNumber
 
-private function CreateNewTestsFile pFilePath, pGeneratedTest
+private function createNewTestsFile pFilePath, pGeneratedTest
    local tFileHeader
    
    put "#script " & quote & pFilePath & quote & cr into tFileHeader
@@ -1356,20 +1375,17 @@ private function CreateNewTestsFile pFilePath, pGeneratedTest
    put "#run with testRunner stack" & cr after tFileHeader
    put tFileHeader into url("file:" & pFilePath)
    return pGeneratedTest
-end CreateNewTestsFile
+end createNewTestsFile
 
 /**
 *  GenerateTestFor
 */
-private function GenerateTestFor pType, pHandler, pParameters
+private function generateTestFor pType, pHandler, pParameters
    local tTestScript
    local tObject
    local tStackName
-   if pType is "function" then
-      put the uFunctionTestTemplate of me into tTestScript
-   else
-      put the uCommandTestTemplate of me into tTestScript
-   end if
+   
+   put testTemplateFor(pType) into tTestScript
    replace "$HANDLER" with pHandler in tTestScript
    replace "$PARAMETERS" with pParameters in tTestScript
    put CurrentObjectID() into tObject
@@ -1378,12 +1394,13 @@ private function GenerateTestFor pType, pHandler, pParameters
    replace "$OBJECT" with tObject in tTestScript
    put cr & "----" & cr after tTestScript
    return tTestScript
-end GenerateTestFor
+end generateTestFor
 
 private function q pText
    return quote & pText & quote
 end q
 
+# remove the last char if it's a cr
 private command chomp @pText
    chopIf cr, pText
 end chomp
@@ -1394,6 +1411,7 @@ private command chopIf pChar, @pText
    end if
 end chopIf
 
+# remove the last char unconditionally
 private command chop @pText
    delete char -1 of pText
 end chop
@@ -1401,7 +1419,7 @@ end chop
 /**
 *  AddDocsAtLine
 */
-private command AddDocsAtLine --pSelectedLine
+private command addDocsAtLine
    local tScript, tGeneratedTest
    local tLineNumber
    local tFunctionLine
@@ -1439,12 +1457,12 @@ private command AddDocsAtLine --pSelectedLine
    put tGeneratedTest before line tLineNumber of tScript
    SetScript tScript
    unlock screen
-end AddDocsAtLine
+end addDocsAtLine
 
 /**
 *  GenerateDocsFor
 */
-private function GenerateDocsFor pLine, pType, pHandler, pParameters
+private function generateDocsFor pLine, pType, pHandler, pParameters
    local tScript, tFilteredScript
    local tTestScript
    local tParams
@@ -1460,7 +1478,6 @@ private function GenerateDocsFor pLine, pType, pHandler, pParameters
       repeat for each item tParam in pParameters
          put "*  " & word 1 of tParam  && ":" & cr after tParams
       end repeat
-      --delete char -1 of tParams
       chomp tParams
    else
       put "*" into tParams
@@ -1497,10 +1514,10 @@ private function GenerateDocsFor pLine, pType, pHandler, pParameters
       end repeat
    end if
    return merge(tTestScript)
-end GenerateDocsFor
+end generateDocsFor
 
--- could change the documentation templates here
--- by modifying the custom properties
+# could change the documentation templates here
+# by modifying the custom properties uCommandDocsTemplate and uFunctionDocsTemplate
 private function docTemplateFor pType
    local tTestScript
    
@@ -1512,10 +1529,25 @@ private function docTemplateFor pType
    return tTestScript
 end docTemplateFor
 
-/**
-* RenameVariable
+/*
+* could change the documentation templates here
+* by modifying the custom properties uCommandTestTemplate and uFunctionTestTemplate
 */
-private command RenameHandler pVarName
+private function testTemplateFor pType
+   local tTestScript
+   
+   if pType is "function" then
+      put the uFunctionTestTemplate of me into tTestScript
+   else
+      put the uCommandTestTemplate of me into tTestScript
+   end if
+   return tTestScript
+end testTemplateFor
+
+/**
+* renameHandler
+*/
+private command renameHandler pHandlerName
    local tList
    local tRenameType
    local tNewName
@@ -1524,14 +1556,14 @@ private command RenameHandler pVarName
    local tEmptyArray
    local tObject
    
-   if pVarName is not empty then
-      -- see if it's a command or function
+   if pHandlerName is not empty then
+      # see if it's a command or function
       put HandlerType() into tType
-      -- first see if we're renaming a private handler.
-      -- if so then we don't need to look at other scripts
+      # first see if we're renaming a private handler.
+      # if so then we don't need to look at other scripts
       put CurrentObjectID() into tObject
       put scriptFromEditor() into tScript
-      put filteredScript("private*" & pVarName & "*", tScript) into tTestForLocal
+      put filteredScript("private*" & pHandlerName & "*", tScript) into tTestForLocal
       if tTestForLocal is not empty then
          put kThisScript into tRenameType
       else
@@ -1541,13 +1573,13 @@ private command RenameHandler pVarName
       
       if it is not "Cancel" then
          set the wholematches to true
-         ask "New name for" && pVarName with pVarName
+         ask "New name for" && pHandlerName with pHandlerName
          put word 1 of it into tNewName
-         if tNewName is empty or tNewName is pVarName then
+         if tNewName is empty or tNewName is pHandlerName then
             exit RenameHandler
          end if
          
-         -- see if there's already a handler of that name
+         # see if there's already a handler of that name
          local tAlreadyExists
          filter tScript with "end" && tNewName & "*" into tAlreadyExists
          if tAlreadyExists is not empty then
@@ -1566,10 +1598,10 @@ private command RenameHandler pVarName
          local tTempScript
          // 2019-06-03 AS: Also change "exit handlername" to "exit newHandlername"
          put line tStartLineNumber to tEndLineNumber of tScript into tTempScript
-         replace pVarName with tNewName in line 1 of tTempScript
-         replace pVarName with tNewName in line -1 of tTempScript
-         replace "exit" && pVarName with "exit" && tNewName in tTempScript
-         replace "pass" && pVarName with "pass" && tNewName in tTempScript
+         replace pHandlerName with tNewName in line 1 of tTempScript
+         replace pHandlerName with tNewName in line -1 of tTempScript
+         replace "exit" && pHandlerName with "exit" && tNewName in tTempScript
+         replace "pass" && pHandlerName with "pass" && tNewName in tTempScript
          put tTempScript into line tStartLineNumber to tEndLineNumber of tScript
          // 2019-06-03 AS: END
          
@@ -1579,24 +1611,24 @@ private command RenameHandler pVarName
          repeat with x=1 to the number of items in tOldParams
             put x into tParamsArray[x]
          end repeat
-         ChangeSignatureInScript pVarName, tNewName, tParamsArray, tScript
+         ChangeSignatureInScript pHandlerName, tNewName, tParamsArray, tScript
          SetScript tScript
          
          if tRenameType is kThisScript then
-            -- just this script, so we're done
+            # just this script, so we're done
          else
-            -- globally
-            put WhereUsed(pVarName, tType) into tList
+            # globally
+            put WhereUsed(pHandlerName, tType) into tList
             repeat for each line tObject in tList
                put the script of tObject into tScript
-               -- first see if there is a handler of the same name in the script
-               -- if not, then go ahead and change the signature
-               -- if so, then we probably don't want to change it.
-               --
-               -- unless we do, in which case we also need the change the handler declaration
+               # first see if there is a handler of the same name in the script
+               # if not, then go ahead and change the signature
+               # if so, then we probably don't want to change it.
+               #
+               # unless we do, in which case we also need the change the handler declaration
                if ShouldSkipScript?(tScript) then
                else
-                  ChangeSignatureInScript pVarName, tNewName, tEmptyArray, tScript
+                  ChangeSignatureInScript pHandlerName, tNewName, tEmptyArray, tScript
                   SetScript tScript, tObject
                end if
             end repeat
@@ -1604,17 +1636,15 @@ private command RenameHandler pVarName
          unlock screen
       end if
    end if
-end RenameHandler
+end renameHandler
 
-private function ShouldSkipScript? pHandlerName, pScript
-   local tTestScript
+private function shouldSkipScript? pHandlerName, pScript
    local tShouldSkip?
    
    put false into tShouldSkip?
-   put pScript into tTestScript
-   filter tTestScript with "*" && pHandlerName & "*"
-   if tTestScript is not empty then
-      repeat for each line tLine in tTestScript
+   filter pScript with "*" && pHandlerName & "*"
+   if pScript is not empty then
+      repeat for each line tLine in pScript
          if word 2 of tLine is pHandlerName then
             put true into tShouldSkip?
             exit repeat
@@ -1622,26 +1652,24 @@ private function ShouldSkipScript? pHandlerName, pScript
       end repeat
    end if
    return tShouldSkip?
-end ShouldSkipScript?
+end shouldSkipScript?
 
 /**
 * RenameVariable
 */
-private command RenameVariable pVariableName
+private command renameVariable pVariableName
    local tRenameType
    local tNewName
    local tScript, tTestForLocal
    local tStartLineNumber, tEndLineNumber
    local tLocalScript
    local tLineCount
-   --local tObject
    
    if pVariableName is not empty then
-      -- default to entire script
+      # default to entire script
       put "This script" into tRenameType
-      --put CurrentObjectID() into tObject
       put scriptFromEditor() into tScript
-      -- see if this is a script-local or handler-local variable
+      # see if this is a script-local or handler-local variable
       put filteredScript("local*" & pVariableName, tScript) into tTestForLocal
       
       if tTestForLocal is empty then
@@ -1657,11 +1685,11 @@ private command RenameVariable pVariableName
          end if
          set the itemdelimiter to comma
          if tRenameType is "This script" then
-            -- entire script
+            # entire script
             put 1 into tStartLineNumber
             put tScript into tLocalScript
          else
-            -- just this handler
+            # just this handler
             local tInsertionPoint
             put ContextForCurrentLine() into tInsertionPoint
             put word 3 of tInsertionPoint into tStartLineNumber
@@ -1670,7 +1698,7 @@ private command RenameVariable pVariableName
          end if
          put 0 into tLineCount
          
-         -- see if the variable already exists
+         # see if the variable already exists
          local tAlreadyExists
          filter tLocalScript with "*local*" & tNewName & "*" into tAlreadyExists         
          if tAlreadyExists is not empty then
@@ -1684,7 +1712,7 @@ private command RenameVariable pVariableName
          
          repeat for each line tLine in tLocalScript
             put true into tShouldProcessLine?
-            -- end of handler?
+            # end of handler?
             switch word 1 of tLine
                case pVariableName
                   put false into tShouldProcessLine?
@@ -1698,7 +1726,7 @@ private command RenameVariable pVariableName
             if tShouldProcessLine? then
                if pVariableName is in tLine then
                   
-                  -- ignore string literals
+                  # ignore string literals
                   replace q(pVariableName) with kQuote in tLine
                   put DoReplace(tLine, pVariableName, tNewName) into tLine
                   replace kQuote with q(pVariableName) in tLine
@@ -1708,12 +1736,12 @@ private command RenameVariable pVariableName
                   put tLine into line tLineCount+tStartLineNumber of tScript
                end if
             end if
-            add 1 to tLineCount -- moved per bn
-         end repeat -- for each line tLine in tLocalScript
+            add 1 to tLineCount # moved per bn
+         end repeat # for each line tLine in tLocalScript
          SetScript tScript
       end if
    end if
-end RenameVariable
+end renameVariable
 
 /**
 * DoReplace
@@ -1726,7 +1754,7 @@ end RenameVariable
 *
 * Returns: the string with replacements made
 */
-private function DoReplace pScript, pOutgoingString, pIncomingString
+private function doReplace pScript, pOutgoingString, pIncomingString
    local tWordNumber
    
    replace "@" with kReference in pScript
@@ -1739,26 +1767,26 @@ private function DoReplace pScript, pOutgoingString, pIncomingString
    end repeat
    replace kReference with "@" in pScript
    return pScript
-end DoReplace
+end doReplace
 
 /**
 * MoveHandler
 */
-private command MoveHandler
+private command moveHandler
    CopyOrMove "Move"
-end MoveHandler
+end moveHandler
 
 /**
 * CopyHandler
 */
-private command CopyHandler
+private command copyHandler
    CopyOrMove "Copy"
-end CopyHandler
+end copyHandler
 
 /**
 * MoveCopy
 */
-private command CopyOrMove pMode
+private command copyOrMove pMode
    local tInsertionPoint
    local tStartLineNumber, tEndLineNumber
    local tScript, tHandler, tDestinationScript
@@ -1768,13 +1796,12 @@ private command CopyOrMove pMode
    
    put CurrentObjectID() into tObjectID
    put ContextForCurrentLine() into tInsertionPoint
-   -- get just the handler name
+   # get just the handler name
    put word 2 of tInsertionPoint into tHandler
    put pMode && tHandler && "to where?" into field "fldObjects" of stack "Object Selector" of me
-   -- get the list of scripts being edited
-   -- convert that into a list of mainstacks
-   -- list the substacks, cards, and objects
-   --put scriptObjectsOfObject(tObjectID) into tControlsList
+   # get the list of scripts being edited
+   # convert that into a list of mainstacks
+   # list the substacks, cards, and objects
    put scriptObjectsOfObject() into tControlsList
    put tControlsList into button "btnObjects" of stack "Object Selector" of me
    put empty into tDestination
@@ -1786,7 +1813,7 @@ private command CopyOrMove pMode
       put word 4 of tInsertionPoint into tEndLineNumber
       put line tStartLineNumber to tEndLineNumber of tScript into tHandler
       
-      -- ensure there's no handler of the same name in the destination script
+      # ensure there's no handler of the same name in the destination script
       local tHandlerName, tTestName
       put line 1 of tHandler into tHandlerName
       if word 1 of tHandlerName is "private" then
@@ -1817,12 +1844,12 @@ private command CopyOrMove pMode
          end if
       end repeat
       
-      -- now we're ready to copy the handler
+      # now we're ready to copy the handler
       try
          edit the script of tDestination
          put scriptFromEditor() & cr & tHandler & cr into tDestinationScript
          SetScript tDestinationScript
-         -- see if we should delete the original script lines
+         # see if we should delete the original script lines
          if pMode is "Move" then
             edit the script of tObjectID
             delete line tStartLineNumber to tEndLineNumber of tScript
@@ -1832,19 +1859,19 @@ private command CopyOrMove pMode
          answer e
       end try
    end if
-end CopyOrMove
+end copyOrMove
 
 /**
 * SafeDelete
 */
-private command SafeDelete pHandlerName
+private command safeDelete pHandlerName
    local tList
    local tType
    local tLinesToDelete
    local tStartLineNumber, tEndLineNumber
    local tObject
    
-   -- see if it's a command or function
+   # see if it's a command or function
    put HandlerType() into tType
    put WhereUsed(pHandlerName, tType) into tList
    if tList is not empty then
@@ -1860,18 +1887,18 @@ private command SafeDelete pHandlerName
       setSEDirtyFlagFor tObject, true
       unlock screen
    end if
-end SafeDelete
+end safeDelete
 
 /**
 * HandlerType
 */
-private function HandlerType
+private function handlerType
    local tTargetLineNumber
    local tLine
    local tType
    local tScript
    
-   -- see if it's a command or function
+   # see if it's a command or function
    put word 2 of the selectedline into tTargetLineNumber
    put scriptFromEditor() into tScript
    put line tTargetLineNumber of tScript into tLine
@@ -1880,14 +1907,14 @@ private function HandlerType
       put word 2 of tLine into tType
    end if
    return tType
-end HandlerType
+end handlerType
 
 /**
 * InsertionPoint
 *
 * Find where to insert the text at beginning of script
 */
-private function InsertionPoint pScript
+private function insertionPoint pScript
    local tInsertionPoint
    local tInComment?
    local tPos
@@ -1900,7 +1927,7 @@ private function InsertionPoint pScript
          add 1 to tInsertionPoint
          put offset("/*",tLine) into tPos
          if tPos > 0 then
-            -- try to ignore block comments
+            # try to ignore block comments
             if offset("*/", tLine) < tPos then
                put true into tInComment?
                next repeat
@@ -1916,7 +1943,7 @@ private function InsertionPoint pScript
       end repeat
    end if
    return tInsertionPoint
-end InsertionPoint
+end insertionPoint
 
 private command insertAtStartOfScript pLine, @pScript
    local tInsertionPoint
@@ -1932,7 +1959,7 @@ end insertAtStartOfScript
 * return the start and end line numbers and the handler name
 * for the handler containing the currently selected line
 */
-private function ContextForCurrentLine
+private function contextForCurrentLine
    local tTarget
    
    lock screen
@@ -1946,7 +1973,7 @@ private function ContextForCurrentLine
    put word 2 of the selectedline into tTarget
    unlock screen
    return ScriptContextForLineNumber(tTarget)
-end ContextForCurrentLine
+end contextForCurrentLine
 
 /**
 * ScriptContextForLineNumber
@@ -1954,26 +1981,26 @@ end ContextForCurrentLine
 * return the start and end line numbers and the handler name
 * for the handler containing the given line
 */
-private function ScriptContextForLineNumber pSelectedLine
+private function scriptContextForLineNumber pSelectedLine
    local tHandlerList
    local tObject
    
-   -- if the script has been edited but not applied
-   -- revavailablehandlers will return wrong information
+   # if the script has been edited but not applied
+   # revavailablehandlers will return wrong information
    put CurrentObjectID() into tObject
    put availableHandlersOf(tObject) into tHandlerList
    repeat for each line tHandler in tHandlerList
-      -- check the start line
+      # check the start line
       if word 3 of tHandler <= pSelectedLine then
-         -- check the end line
+         # check the end line
          if word 4 of tHandler >= pSelectedLine then
             return tHandler
          end if
       end if
    end repeat
-   -- otherwise return the entire script scope
+   # otherwise return the entire script scope
    return "X Script 1 -1"
-end ScriptContextForLineNumber
+end scriptContextForLineNumber
 
 private function extractHandlerTextAtLine pLineNumber, pScript
    local tInsertionPoint, tStartLineNumber, tEndLineNumber
@@ -1987,9 +2014,9 @@ private function extractHandlerTextAtLine pLineNumber, pScript
 end extractHandlerTextAtLine
 
 private function availableHandlersOf pObject
-   -- revAvailableHandlers is wrong if there are unapplied edits
-   -- and doesn't find duplicate handlers
-   -- so we have to roll our own
+   # revAvailableHandlers is wrong if there are unapplied edits
+   # and doesn't find duplicate handlers
+   # so we have to roll our own
    local tHandlerList
    local tEditors, tTargetObjects
    local tScript, tHandlers
@@ -1998,14 +2025,14 @@ private function availableHandlersOf pObject
    local tHandlerType
    local tPos
    
-   -- see if we've already cached this list
+   # see if we've already cached this list
    if sObjectHandlersArray[pObject] is not empty then
       return sObjectHandlersArray[pObject]
    end if
    
    put editor() into tEditors
    repeat for each line tEditor in tEditors
-      -- get a list of the objects being edited in all editors
+      # get a list of the objects being edited in all editors
       dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
       put the result after tTargetObjects
       if pObject is among the lines of tTargetObjects then
@@ -2015,7 +2042,7 @@ private function availableHandlersOf pObject
          replace "command " with "on " in tHandlers
          
          local tHandlerStarts, tLastLineNumber
-         -- get 'before' and 'after' handlers
+         # get 'before' and 'after' handlers
          filter tHandlers with regex pattern "(?i)^[ba][ef][ft].*" into tHandlerStarts
          put 0 into tLastLineNumber
          repeat for each line tLine in tHandlerStarts
@@ -2058,11 +2085,14 @@ private function availableHandlersOf pObject
             put tPos + tLastLineNumber into tHandlerArray[tHandler][tLastLineNumber]["endline"]
          end repeat
          
-         -- find 'private', 'command' and 'on' handlers
-         filter tHandlers with regex pattern "(?i)^[pcogs][rone][im t].*" into tHandlerStarts
-         -- we already processed functions
+         # find 'private', 'command' and 'on' handlers
+         filter tHandlers with regex pattern "(?i)^[abpcogs][frone][fim t].*" into tHandlerStarts
+         # we already processed functions
          filter tHandlerStarts without "* function *"
+         --filter tHandlerStarts without "before *"
+         --filter tHandlerStarts without "after *"
          put 0 into tLastLineNumber
+         
          repeat for each line tLine in tHandlerStarts
             if word 1 of tLine is "private" then
                delete word 1 of tLine
@@ -2087,11 +2117,11 @@ private function availableHandlersOf pObject
                tHandler && \
                tHandlerArray[tHandler][tHandlerLine]["startline"] && \
                tHandlerArray[tHandler][tHandlerLine]["endline"] & cr after tHandlerList
-      end repeat -- for each key tHandlerLine in tHandlerArray[tHandler]
-   end repeat -- for each key tHandler in tHandlerArray
+      end repeat # for each key tHandlerLine in tHandlerArray[tHandler]
+   end repeat # for each key tHandler in tHandlerArray
    sort lines of tHandlerList by word 1 of each
    sort lines of tHandlerList by word 2 of each
-   -- cache the list for future use
+   # cache the list for future use
    put tHandlerList into sObjectHandlersArray[pObject]
    return tHandlerList
 end availableHandlersOf
@@ -2104,7 +2134,7 @@ end availableHandlersOf
 *
 * pVariableName, the handler we're about to operate on
 */
-private function WhereUsed pVariableName, pType, pReportLocally
+private function whereUsed pVariableName, pType, pReportLocally
    local tScript
    local tObjectList
    local tNumControls
@@ -2114,20 +2144,20 @@ private function WhereUsed pVariableName, pType, pReportLocally
    put scriptFromEditor() into tScript
    filter tScript with "private*" & pVariableName & "*"
    
-   -- get list of objects and their scripts
-   -- get the long id of the object we're working on
+   # get list of objects and their scripts
+   # get the long id of the object we're working on
    put CurrentObjectID() into tObjectID
-   -- get the stack metadata
-   -- get the list of stacks and substacks
+   # get the stack metadata
+   # get the list of stacks and substacks
    try
-      -- get the containing stack from the long id
+      # get the containing stack from the long id
       put targetStackOf(tObjectID) into tMainstack
       put tMainstack & cr into tStacks
    catch e
       --answer "tObjectID=" & tObjectID & cr & "tMainstack=" & tMainstack
    end try
    put the substacks of stack tMainstack after tStacks
-   -- fill the array with stacks and cards
+   # fill the array with stacks and cards
    repeat for each line tStack in tStacks
       if the name of stack tStack is the name of tObjectID then
          if pReportLocally is true then
@@ -2148,12 +2178,12 @@ private function WhereUsed pVariableName, pType, pReportLocally
          if TestScriptForUse(pVariableName, pType, tScript) then
             put the long id of control x of stack tStack & cr after tObjectList
          end if
-      end repeat --  with x=1 to tNumControls
-   end repeat --  for each line tStack in tStacks
+      end repeat #  with x=1 to tNumControls
+   end repeat #  for each line tStack in tStacks
    return tObjectList
-end WhereUsed
+end whereUsed
 
-private function scriptObjectsOfObject --pObjectID
+private function scriptObjectsOfObject
    local tMainstack
    local tTargetObjects
    local tCards
@@ -2162,14 +2192,14 @@ private function scriptObjectsOfObject --pObjectID
    local tEditors
    local tObjectArray
    
-   -- get a list of all the open script editors
+   # get a list of all the open script editors
    put revListScriptEditors() into tEditors
    repeat for each line tEditor in tEditors
-      -- get a list of the objects being edited
+      # get a list of the objects being edited
       dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
       put the result & cr after tTargetObjects
       repeat for each line tObject in tTargetObjects
-         -- get the containing stack from the long id
+         # get the containing stack from the long id
          put targetStackOf(tObject) into tMainstack
          if tMainstack is not among the lines of tMainstackList then
             put tMainstack & cr after tMainstackList
@@ -2181,27 +2211,27 @@ private function scriptObjectsOfObject --pObjectID
       local tStackID, tCardID
       put empty into tObjectArray
       repeat for each line tStack in tMainstackList
-         -- list the stack itself
+         # list the stack itself
          put the long id of stack tStack into tStackID
          put tStack into tObjectArray[tStackID]
          put the cardids of stack tStack into tCards
          repeat for each line tCard in tCards
             put the long id of card id tCard of tStackID into tCardID
             put tCardID into tObjectArray[tStackID][tCard][ID]
-            -- list each card in the stack
+            # list each card in the stack
             put the number of controls of tCardID into tNumControls
             repeat with x=1 to tNumControls
-               -- list the long id of each control on the card
+               # list the long id of each control on the card
                put the long id of control x of tCardID into tObjectArray[tStackID][tCard][x]
             end repeat
          end repeat
       end repeat
    end repeat
    
-   -- unwind the array into something an option menu can use
+   # unwind the array into something an option menu can use
    repeat for each key tStack in tObjectArray
-      put the name of tStack & cr after tControlNamesList -- the stack name
-      put tab & the name of tStack & cr after tControlNamesList -- the stack name
+      put the name of tStack & cr after tControlNamesList # the stack name
+      put tab & the name of tStack & cr after tControlNamesList # the stack name
       repeat for each element tCard in tObjectArray[tStack]
          put tab & the name of tCard[ID] & cr after tControlNamesList
          repeat for each element tControl in tCard
@@ -2218,15 +2248,22 @@ end scriptObjectsOfObject
 *
 * Return true if the given handler name is used in the given script
 * Return false if there is a private handler with the same name
-* Only called from WhereUsed
+* Called from WhereUsed and listParamsIn
 */
-private function TestScriptForUse pHandlerName, pType, pScript
+private function testScriptForUse pHandlerName, pType, pScript
    local tIsUsed?
    local tWordOffset
    
    put false into tIsUsed?
    set the wholeMatches to true
    if pScript is not empty then
+      #      switch pType
+      #         case "param"
+      #         case "command"
+      #         case "on"
+      #         case "function"
+      #         case "getProp handler"
+      #         case "steProp handler"
       filter pScript without "end*"
       
       replace "command " with "on " in pScript
@@ -2241,15 +2278,19 @@ private function TestScriptForUse pHandlerName, pType, pScript
                put true into tIsUsed?
             end if
          end if
-      end if -- massaged pScript is not empty
-   end if -- pScript is not empty
+      end if # massaged pScript is not empty
+      #            break
+      #         default
+      #            dbgRefactorlog param(0) && pHandlerName && pType
+      #      end switch
+   end if # pScript is not empty
    return tIsUsed?
-end TestScriptForUse
+end testScriptForUse
 
 /**
 *
 */
-private command SetScript pScript, pObject
+private command setScript pScript, pObject
    local tSelectionPoint
    local tSavedDefaultStack
    local tEditor
@@ -2263,7 +2304,7 @@ private command SetScript pScript, pObject
    # if more than one is open, find the one editing pObject
    put editor() into tEditor
    set the defaultstack to tEditor
-   -- set undo restore point
+   # set undo restore point
    edit the script of pObject
    Undo.Push pObject
    try
@@ -2277,21 +2318,21 @@ private command SetScript pScript, pObject
          select after tSelectionPoint
       end if
    catch e
-      -- this shouldn't happen, so tell the user
+      # this shouldn't happen, so tell the user
       answer "SetScript:" && e & cr & "tSelectionPoint=" & tSelectionPoint
    end try
    set the defaultstack to tSavedDefaultStack
    unlock screen
-end SetScript
+end setScript
 
 private command setSEDirtyFlagFor pObject, pIsDirty?
    put CurrentObjectID() into pObject
    dispatch "setDirty" to group "Editor" of stack editor() with pObject, pIsDirty?
-   -- call this to fake out the dirty flag... otherwise it's not persistent
-   -- this tells the textReplace handler to move nothing starting at char 1
-   --
-   -- NOTE: textReplace needs the object reference to be in rugged ID form, NOT long id
-   --
+   # call this to fake out the dirty flag... otherwise it's not persistent
+   # this tells the textReplace handler to move nothing starting at char 1
+   #
+   # NOTE: textReplace needs the object reference to be in rugged ID form, NOT long id
+   #
    dispatch "textReplace" to group "Editor" of stack main with 1, "", "", pObject
 end setSEDirtyFlagFor
 
@@ -2346,6 +2387,12 @@ private function simpleTypeFromVerboseType pType
       case "setProp"
          put "S" into tSimpleType
          break
+      case "after"
+         put "A" into tSimpleType
+         break
+      case "before"
+         put "B" into tSimpleType
+         break
       default
          put "M" into tSimpleType
    end switch
@@ -2362,7 +2409,7 @@ end simpleTypeFromVerboseType
 -- globally:
 -- find unused non-private handlers
 */
-private command FindOrphans pObject
+private command findOrphans pObject
    local tScript
    local tOrphanList, tUndeclaredList
    local tLineNumber
@@ -2381,17 +2428,17 @@ private command FindOrphans pObject
    put ListOrphansOfType("constant", tScript) after tOrphanList
    put listParamsIn(pObject) after tOrphanList
    
-   -- do the global thing
+   # do the global thing
    put globalOrphansOf(pObject) after tOrphanList
    
-   -- find undeclared variables if explicitVars is false
+   # find undeclared variables if explicitVars is false
    local tUndeclared
    put listUndeclaredVariablesIn(tScript) into tUndeclared
    
-   -- find leftover "put <xyz>" and "put <xyz> into msg"
+   # find leftover "put <xyz>" and "put <xyz> into msg"
    put 1 into tLineNumber
    repeat for each line tLine in tScript
-      set the cursor to busy
+      --set the cursor to busy
       switch token 1 of tLine
          case "put"
             removeCommentsFrom tLine
@@ -2408,7 +2455,7 @@ private command FindOrphans pObject
                   break
                end if
             end if
-            -- just fall through here
+            # just fall through here
          case "breakpoint"
             put tLineNumber & tab & "orphan" && word 1 to -1 of tLine & cr after tOrphanList
             break
@@ -2422,14 +2469,522 @@ private command FindOrphans pObject
    displayOrphans tOrphanList, tUndeclaredList is not empty
    --logTime
    unlock screen
-end FindOrphans
+end findOrphans
+
+# only called from ensureNamingConvention
+private function listOfGlobalsOf pScript
+   return listOfVariableTypeOf("global", pScript)
+end listOfGlobalsOf
+
+# only called from ensureNamingConvention
+private function listOfScriptLocalsOf pScript
+   return listOfVariableTypeOf("local", pScript)
+end listOfScriptLocalsOf
+
+private function listOfVariableTypeOf pType, pScript
+   local tScriptLocals, tWordLocals
+   
+   put filteredScript(pType, pScript) into tScriptLocals
+   
+   repeat for each line tLocal in tScriptLocals
+      if tLocal begins with pType then
+         # strip comments from the line
+         put token 2 to -1 of tLocal & cr after tWordLocals
+      end if
+   end repeat
+   replace comma with cr in tWordLocals
+   replace space with empty in tWordLocals
+   filter tWordLocals without empty
+   sort tWordLocals ascending
+   return tWordLocals
+end listOfVariableTypeOf
+
+private command ensureNamingConvention pObject
+   local tScript
+   local tConstants
+   local tLocals, tGlobals
+   local tParams
+   local tRenamedList, tScriptLine
+   local tHandlerName
+   local tTypesArray
+   local tIncludeUndeclaredVariables?
+   local tReportOnly?
+   
+   answer warning "WARNING: This will change your script. Is it backed up somewhere and saved?"&cr&"Include undeclared variables?" with "Report Only" and "Continue" and "Abort"
+   switch it
+      case "Report Only"
+         put true into tReportOnly?
+         break
+      case "Continue"
+         put false into tReportOnly?
+         break
+      default
+         exit EnsureNamingConvention
+   end switch
+   #   if it is not "continue" then
+   #      exit EnsureNamingConvention
+   #   end if
+   set the cursor to busy
+   lock screen
+   if pObject is empty then
+      put CurrentObjectID() into pObject
+   end if
+   put scriptFromEditor() into tScript
+   
+   put filteredScript("constant", tScript) into tConstants
+   sort tConstants ascending
+   put tConstants into tTypesArray["constants"]
+   
+   put listOfGlobalsOf(tScript) into tGlobals
+   put tGlobals into tTypesArray["globals"]
+   
+   put listOfScriptLocalsOf(tScript) into tLocals
+   put tLocals into tTypesArray["scriptLocals"]
+   
+   local tHandlerList
+   put availableHandlersOf(pObject) into tHandlerList
+   put tHandlerList into tTypesArray["handlers"]
+   
+   put scriptFromEditor() into tScript
+   local tFirstLine, tLastLine, tDeclaration
+   local tHandler, tLocalVars
+   
+   # do the constants first
+   # should start with "k" - ignore if they already do
+   put ensureConstants(tTypesArray, tScript) after tRenamedList
+   
+   # the globals
+   # should start with "g" - ignore if they already do
+   put ensureGlobalVariables(tTypesArray, tScript) after tRenamedList
+   
+   # the script locals
+   # should start with "s" - ignore if they already do
+   put ensureScriptLocalVariables(tTypesArray, tScript) after tRenamedList
+   
+   # put false to play it safe
+   put true into tIncludeUndeclaredVariables?
+   --put false into tIncludeUndeclaredVariables?
+   put ensureParametersAndLocalVariables(tTypesArray, tIncludeUndeclaredVariables?, tScript) after tRenamedList
+   
+   # if testing
+   if tReportOnly? then
+      --put tScript into msg
+   else
+      SetScript tScript, pObject
+   end if
+   
+   # report the renamed items and their approximate line numbers
+   put tRenamedList into field "fldOrphanList" of card "RenamedVariables" of me
+   go card "RenamedVariables" of stack "revRefactor"
+   palette me
+   set the visible of me to true
+   
+   unlock screen
+end ensureNamingConvention
+
+private function ensureParametersAndLocalVariables pTypesArray, pIncludeUndeclaredVariables?, @pScript
+   local tHandlerList
+   local tRenamedList
+   local tLocalVars, tGlobalVars, tOriginalGlobalVars
+   local tFirstLine, tLastLine
+   local tDeclaration
+   local tParams
+   local tHandler
+   
+   # do the parameters first
+   # then the locals with handler scope
+   # can handle these in the same function
+   put pTypesArray["handlers"] into tHandlerList
+   repeat for each line tHandlerLine in tHandlerList
+      put empty into tLocalVars
+      put word 3 of tHandlerLine into tFirstLine
+      put word 4 of tHandlerLine into tLastLine
+      put line tFirstLine of pScript into tDeclaration
+      # put word 2 of tHandlerLine into tHandlerName
+      if char 1 of tHandlerLine is "P" then
+         # private handler
+         put token 4 to -1 of tDeclaration into tParams
+      else
+         put token 3 to -1 of tDeclaration into tParams
+      end if
+      if tParams is not empty then
+         replace comma with cr in tParams
+      end if
+      
+      # now add the declared local variables
+      put pTypesArray["globals"] into tOriginalGlobalVars
+      put tOriginalGlobalVars into tGlobalVars
+      put line tFirstLine to tLastLine of pScript into tHandler
+      repeat for each line tLine in tHandler
+         if trueword 1 of tLine is "local" then
+            replace "=" with "#" in tLine
+            put token 1 to -1 of tLine & cr after tLocalVars
+         end if
+         if trueword 1 of tLine is "global" then
+            replace "=" with "#" in tLine
+            put token 1 to -1 of tLine & cr after tGlobalVars
+         end if
+      end repeat
+      put tGlobalVars into pTypesArray["globals"]
+      
+      # get just a list of local variables
+      if tLocalVars is not empty then
+         replace space with cr in tLocalVars
+         replace comma with cr in tLocalVars
+         filter tLocalVars without "*local*"
+         filter tLocalVars without empty
+         sort tLocalVars descending
+      end if
+      
+      # NOTE: it's possible to have a parameter with the same name
+      # as a global or script variable
+      repeat for each line tParam in tParams
+         put word 1 of tParam into tParam
+         # test for referenced variable
+         if char 1 of tParam is "@" then
+            delete char 1 of tParam
+         end if
+         if char 1 of tParam is the idParameter of me then
+            next repeat
+         end if
+         
+         # parameters should start with "p"
+         safeReplace tParam, the idParameter of me, tHandler
+         put tFirstLine && "parameter" && trueword 2 of tHandlerLine&":"&tParam && "->" && the idParameter of me & tParam & cr after tRenamedList
+      end repeat
+      
+      # get the undeclared variables
+      # DANGER: here there be tygers
+      local tUndeclared
+      if pIncludeUndeclaredVariables? then
+         put undeclaredLocalVariablesOf(tHandler, pTypesArray) into tUndeclared
+         repeat for each line tVar in tUndeclared
+            if tVar is not in tLocalVars then
+               put tVar & cr after tLocalVars
+            end if
+         end repeat
+      end if
+      filter tLocalVars without empty
+      
+      local tHandlerContents
+      local tDeclarationLineNumber
+      repeat for each line tParam in tLocalVars
+         if char 1 of tParam is the idHandlerLocal of me then
+            next repeat
+         end if
+         if tParam is in tParams then
+            next repeat
+         end if
+         if tParam is in pTypesArray["scriptLocals"] then
+            next repeat
+         end if
+         if tParam is in pTypesArray["constants"] then
+            next repeat
+         end if
+         if tParam is in pTypesArray["globals"] then
+            next repeat
+         end if
+         if tParam is among the items of kMessageNames then
+            next repeat
+         end if
+         put line 2 to -2 of tHandler into tHandlerContents
+         safeReplace tParam, the idHandlerLocal of me, tHandlerContents
+         put the result into tDeclarationLineNumber
+         put tFirstLine+tDeclarationLineNumber && "local" && trueword 2 of tHandlerLine&":"&tParam && "->" && the idHandlerLocal of me & tParam & cr after tRenamedList
+         put tHandlerContents into line 2 to -2 of tHandler
+      end repeat
+      put tHandler into line tFirstLine to tLastLine of pScript
+   end repeat
+   
+   put tOriginalGlobalVars into pTypesArray["globals"]
+   return tRenamedList
+end ensureParametersAndLocalVariables
+
+# should start with "k" - ignore if they already do
+private function ensureConstants @pTypesArray, @pScript
+   local tConstants
+   local tStartPos, tEndPos
+   local tScriptLine
+   local tRenamedList
+   local tConstantName
+   
+   put pTypesArray["constants"] into tConstants
+   repeat for each line tConstantLine in tConstants
+      put trueword 2 of tConstantLine into tConstantName
+      if tConstantName begins with the idConstant of me then
+         next repeat
+      else
+         put lineoffset("constant"&&tConstantName, pScript) into tScriptLine
+         safeReplace tConstantName, the idConstant of me, pScript
+         put tScriptLine && "constant" && tConstantName && "->" && the idConstant of me & tConstantName & cr after tRenamedList
+         put the idConstant of me & tConstantName & cr after pTypesArray["constants"]
+      end if
+   end repeat
+   return tRenamedList
+end ensureConstants
+
+private function ensureScriptLocalVariables @pTypesArray, @pScript
+   local tLocals
+   local tRegexString
+   local tFound?
+   local tStartPos, tEndPos
+   local tScriptLine
+   local tRenamedList
+   
+   # the script locals
+   # should start with "s" - ignore if they already do
+   put pTypesArray["scriptLocals"] into tLocals
+   repeat for each line tLocal in tLocals
+      if tLocal begins with the idScriptLocal of me then
+         next repeat
+      else
+         put trueword 1 of tLocal into tLocal
+         # determine the scope of this local variable
+         put "((?i)local\s.*"&tLocal&")" into tRegexString
+         
+         put matchChunk(pScript, tRegexString, tStartPos, tEndPos) into tFound?
+         if tFound? then
+            put the number of lines in char 1 to tStartPos of pScript into tScriptLine
+         end if
+         
+         # there may already be a constant or... assigned
+         safeReplace tLocal, the idScriptLocal of me, pScript
+         put tScriptLine && "local" && tLocal && "->" && the idScriptLocal of me & tLocal & cr after tRenamedList
+         put the idScriptLocal of me & tLocal & cr after pTypesArray["scriptLocals"]
+      end if
+   end repeat
+   return tRenamedList
+end ensureScriptLocalVariables
+
+private function ensureGlobalVariables @pTypesArray, @pScript
+   local tGlobals
+   local tRegexString
+   local tFound?
+   local tStartPos, tEndPos
+   local tScriptLine
+   local tRenamedList
+   
+   put pTypesArray["globals"] into tGlobals
+   repeat for each line tGlobal in tGlobals
+      if tGlobal begins with the idGlobal of me then
+         next repeat
+      else
+         # determine the scope of this local variable
+         put "((?i).*global\s.*"&tGlobal&")" into tRegexString
+         
+         put matchChunk(pScript, tRegexString, tStartPos, tEndPos) into tFound?
+         if tFound? then
+            put the number of lines in char 1 to tStartPos of pScript into tScriptLine
+         end if
+         
+         safeReplace tGlobal, the idGlobal of me, pScript
+         put tScriptLine && "global" && tGlobal && "->" && the idGlobal of me&tGlobal & cr after tRenamedList
+         put the idGlobal of me&tGlobal & cr after pTypesArray["globals"]
+      end if
+   end repeat
+   return tRenamedList
+end ensureGlobalVariables
+
+command safeReplace pOriginalvalue, pPrefix, @pText
+   local tWordPos, tWordPrev
+   local tLineNumber, tLine
+   local tDeclarationWord
+   
+   set the wholematches to true
+   put 0 into tWordPrev
+   # find the first instance of the variable
+   put wordOffset(pOriginalValue, pText, 0) into tWordPos
+   put the number of lines of word 1 to tWordPos of pText into tDeclarationWord
+   repeat while tWordPos > 0
+      put the number of lines of word 1 to tWordPos of pText into tLineNumber
+      # eliminate comments here
+      put token 1 to -1 of line tLineNumber of pText into tLine
+      # now we have the line containing the variable (and no comments)
+      put tWordPos into tWordPrev
+      if pOriginalValue is in tLine then
+         # replace the variable with the new value
+         if word tWordPos of pText is quote&pOriginalvalue&quote then
+            --breakpoint
+         else
+            put pPrefix&pOriginalvalue into word tWordPos of pText
+         end if
+      end if
+      put wordOffset(pOriginalValue, pText, tWordPos) into tWordPos
+      if tWordPos is 0 then
+         exit repeat
+      else
+         add tWordPrev to tWordPos
+      end if
+   end repeat
+   return tDeclarationWord
+end safeReplace
+
+command xsafeReplace pOriginalvalue, pPrefix, @pText
+   local tWordPos, tWordPrev
+   local tLineNumber, tLine
+   local tDeclarationWord
+   
+   set the wholematches to true
+   put 0 into tWordPrev
+   # find the first instance of the variable
+   put truewordOffset(pOriginalValue, pText, 0) into tWordPos
+   put the number of lines of trueword 1 to tWordPos of pText into tDeclarationWord
+   repeat while tWordPos > 0
+      put the number of lines of trueword 1 to tWordPos of pText into tLineNumber
+      # eliminate comments here
+      put token 1 to -1 of line tLineNumber of pText into tLine
+      # now we have the line containing the variable (and no comments)
+      put tWordPos into tWordPrev
+      if pOriginalValue is in tLine then
+         # replace the variable with the new value
+         if quote&pOriginalValue&quote is in tLine then
+            --breakpoint
+         else
+            put pPrefix&pOriginalvalue into trueword tWordPos of pText
+         end if
+      end if
+      put truewordOffset(pOriginalValue, pText, tWordPos) into tWordPos
+      if tWordPos is 0 then
+         exit repeat
+      else
+         add tWordPrev to tWordPos
+      end if
+   end repeat
+   return tDeclarationWord
+end xsafeReplace
+
+private function isAlreadyDeclared? pVariable, pTypesArray
+   local tBool
+   
+   put false into tBool
+   if pVariable is among the lines of pTypesArray["globals"] then
+      put true into tBool
+   else if pVariable is among the lines of pTypesArray["constants"] then
+      put true into tBool
+   else if pVariable is among the lines of pTypesArray["scriptlocals"] then
+      put true into tBool
+   end if
+   return tBool
+end isAlreadyDeclared?
+
+private function undeclaredLocalVariablesOf pHandler, pTypesArray
+   local tUndeclared
+   local tWord
+   local tWordNum
+   local tTokens
+   local tParams
+   
+   put GetTokens(true, true) into tTokens
+   
+   put line 1 of pHandler into tParams
+   replace "@" with empty in tParams
+   
+   repeat for each line tLine in pHandler
+      put token 1 to -1 of tLine into tLine
+      switch word 1 of tLine
+         case "global"
+         case "constant"
+            next repeat
+      end switch
+      
+      delete word 1 of tLine
+      if tLine is empty then
+         next repeat
+      end if
+      # declare loop variables: do we need to do this?
+      --      if word 1 to 3 of theLine is "repeat for each" then
+      --         put word 5 of theLine into tWord
+      --         if tUndeclared is empty then
+      --            put tWord into tUndeclared
+      --         else
+      --            if tWord is not among the lines of tUndeclared then
+      --               put cr & tWord after tUndeclared
+      --            end if
+      --         end if
+      --         next repeat
+      --      end if
+      
+      # find variables as the target of into, after, before, repeat constructs
+      if "into" is among the truewords of tLine or \
+            "after" is among the truewords of tLine or \
+            "before" is among the truewords of tLine or \
+            word 1 of tLine is "repeat" then
+         put 0 into tWordNum
+         repeat for each word theWord in tLine
+            add 1 to tWordNum
+            # ignore comments
+            if char 1 of theWord is "#" or char 1 to 2 of theWord is "--" then
+               exit repeat
+            end if
+            
+            local tNextWord
+            if theWord is among the items of "with,into,after,before" then
+               put word tWordNum+1 of tLine into tNextWord
+               if tNextWord is among the items of kContainerNames then
+                  put word tWordNum+2 of tLine into tNextWord
+               else if char 1 of tNextWord is "$" then # environment variables
+                  next repeat
+               end if
+               if "(" is in tNextWord then
+                  next repeat
+               end if
+               if "[" is in tNextWord then
+                  next repeat
+               end if
+               # see if we renamed an incoming parameter already
+               if char 1 of tNextWord is the idParameter of me and char 2 to -1 of tNextWord is in tParams then
+                  next repeat
+               end if
+               if isAlreadyDeclared?(tNextWord, pTypesArray) then
+                  next repeat
+               end if
+               put word 1 of tNextWord into tNextWord
+               if tNextWord is not empty and tNextWord is not among the lines of tTokens then
+                  if "[" is in tNextWord then
+                     replace "[" with cr in tNextWord
+                     replace "]" with "" in tNextWord
+                  end if
+                  if quote is in tNextWord then
+                     next repeat
+                  end if
+                  if tUndeclared is empty then
+                     put tNextWord into tUndeclared
+                  else
+                     if tNextWord is not among the lines of tUndeclared then
+                        put cr & tNextWord after tUndeclared
+                     end if
+                  end if
+               end if
+            end if # "with,into,after,before"
+         end repeat # for each token theWord in theLine
+      end if # into, after, before, repeat
+   end repeat # for each line theLine in pHandler
+   return cr & tUndeclared
+end undeclaredLocalVariablesOf
+
+local sDictionaryTerms
+
+private function getTokens pDoFunctions?, pDoCommands?
+   if sDictionaryTerms is empty then
+      if pDoCommands? then
+         put the commandnames into sDictionaryTerms
+         put the externalcommands of stack "Home" after sDictionaryTerms
+      end if
+      if pDoFunctions? then
+         put the functionnames after sDictionaryTerms
+         put the externalfunctions of stack "Home" after sDictionaryTerms
+      end if
+      sort sDictionaryTerms
+   end if
+   return sDictionaryTerms
+end getTokens
 
 private command displayUndeclaredVars pUndeclaredList
-   -- see if there are any present then
+   # see if there are any present then
    if pUndeclaredList is empty then -- nothing to see here
    else
       lock screen
-      -- place the undeclared variables on the Undeclared card
+      # place the undeclared variables on the Undeclared card
       put pUndeclaredList into field "fldUndeclared" of card "Undeclared" of me
       set the visible of button "btnUndeclared" of card "Orphans" of me to true
       unlock screen
@@ -2439,7 +2994,7 @@ end displayUndeclaredVars
 private command displayOrphans pOrphanList, pUndeclaredVarsExist
    if pOrphanList is not empty or pUndeclaredVarsExist then
       lock screen
-      -- group by type rather than sorting by line number
+      # group by type rather than sorting by line number
       --sort numeric pOrphanList
       sort lines of pOrphanList by item 2 of each
       put pOrphanList into field "fldOrphanList" of card "Orphans" of me
@@ -2466,7 +3021,7 @@ private function listUndeclaredVariablesIn pScript
    dispatch "revSEGetPreference" to stack "revseutilities"  with "explicitVariables"
    if the result is true then
    else
-      -- put the undeclared variables into tUndeclared
+      # put the undeclared variables into tUndeclared
       put 1 into tLineNumber
       set the itemdelimiter to comma
       repeat for each line tTest in pScript
@@ -2487,8 +3042,8 @@ private function listUndeclaredVariablesIn pScript
                end repeat
                break
             case "repeat"
-               -- find the variable here:
-               -- repeat for each <thing> variable
+               # find the variable here:
+               # repeat for each <thing> variable
                if token 2 to 3 of tTest is "for each" then
                   put tCurrentHandler &&  token 5 of tTest & cr after tLocals
                end if
@@ -2541,7 +3096,7 @@ private command removeCommentsFrom @pText
    removeQuotesFrom pText
    removeBlockCommentsFrom pText
    
-   -- remove single-line comments
+   # remove single-line comments
    replace "#*" with empty in pText
    replace "//*" with empty in pText
    replace "--*" with empty in pText
@@ -2604,7 +3159,7 @@ private function listOrphansOfType pType, pScript
    local tOrphanList
    local tFilteredScript, tConstantList
    
-   -- look for declarations
+   # look for declarations
    put filteredScript(pType && "*", pScript) into tFilteredScript
    if pType is "constant" then
       repeat for each line tLine in tFilteredScript
@@ -2612,15 +3167,15 @@ private function listOrphansOfType pType, pScript
       end repeat
       put tConstantList into tFilteredScript
    end if
-   -- see if there's anything to work with
+   # see if there's anything to work with
    local tOffsetLine
    if tFilteredScript is not empty then
       local tPos
       repeat for each key tKey in sScriptArray
          put sScriptArray[tKey] into tLine
          put tLine into tOffsetLine
-         delete word 1 of tLine -- should be pType
-         -- remove initialization value
+         delete word 1 of tLine # should be pType
+         # remove initialization value
          put offset("=", tLine) into tPos
          if tPos > 0 then
             delete char tPos to -1 of tLine
@@ -2631,7 +3186,7 @@ private function listOrphansOfType pType, pScript
          filter tScope without "*" & pType & " *"
          repeat for each item tVariable in tLine
             if word 1 of tVariable is not among the tokens of tScope then
-               put tKey & tab & "unused" && pType && tVariable & cr after tOrphanList
+               put tKey & tab & "unused" && pType && word 1 of tVariable & cr after tOrphanList
             end if
          end repeat
       end repeat
@@ -2737,14 +3292,14 @@ private function globalOrphansOf pObject
             if char 2 of tHandlerDetails is "F" then
                break
             end if
+         case "M"
+            put "command" into tType
+            break
          case "G"
             put "getProp handler" into tType
             break
          case "S"
             put "setProp handler" into tType
-            break
-         case "M"
-            put "command" into tType
             break
       end switch
       put word 2 of tHandlerDetails into tHandler
@@ -2758,7 +3313,7 @@ end globalOrphansOf
 private function getIDEMessages pElementType
    local tMessagesA, tAllMessagesA
    
-   -- bernd's discovery
+   # bernd's discovery
    put ideDocsFetchLCSElementsOfType(pElementType) into tMessagesA
    repeat for each key aKey in tMessagesA
       put tMessagesA[aKey]["display Name"] & cr after tAllMessagesA
@@ -2773,13 +3328,14 @@ end getIDEMessages
 private function filteredScript pType, pScript
    local x
    local tScript
+   local tTokens
    
    delete variable sScriptArray
    put 1 into x
    removeCommentsFrom pScript
    repeat for each line tLine in pScript
       if word 1 of tLine begins with word 1 of pType then
-         put tLine into sScriptArray[x]
+         put token 1 to -1 of tLine into sScriptArray[x]
          put tLine & cr after tScript
       end if
       add 1 to x
@@ -2788,7 +3344,7 @@ private function filteredScript pType, pScript
 end filteredScript
 
 local sEditObjects
-private command StoreScrollsOfCard
+private command storeScrollsOfCard
    local tCard
    
    lock screen
@@ -2796,9 +3352,9 @@ private command StoreScrollsOfCard
    put the vscroll of field kCodeField of group "Editor" of card tCard into sEditObjects["card"][tCard]["vScroll"]
    put the hscroll of field kCodeField of group "Editor" of card tCard into sEditObjects["card"][tCard]["hScroll"]
    unlock screen
-end StoreScrollsOfCard
+end storeScrollsOfCard
 
-private command RestoreScrollsOfCard
+private command restoreScrollsOfCard
    local tCard
    
    lock screen
@@ -2807,11 +3363,7 @@ private command RestoreScrollsOfCard
    set the hscroll of field kCodeField of group "Editor" of card tCard to sEditObjects["card"][tCard]["hScroll"]
    dispatch "matchScrolls" to field kCodeField of group "Editor" of card tCard
    unlock screen
-end RestoreScrollsOfCard
-
---private function editorField
---   return kCodeField
---end editorField
+end restoreScrollsOfCard
 
 private function editor pObject
    local tEditors
@@ -2823,7 +3375,7 @@ private function editor pObject
    else
       put revListScriptEditors() into tEditors
       repeat for each line tEditor in tEditors
-         -- get a list of the objects being edited in all editors
+         # get a list of the objects being edited in all editors
          dispatch "revSEGetTargetObjects" to group "Editor" of stack tEditor
          put the result into tTargetObjects
          if pObject is among the lines of tTargetObjects then
@@ -2892,13 +3444,13 @@ private function codeQualityOf pObject
    add item 3 of tAverage to tTotalFunctions
    add tAvgPublicFunctionLines to tAverageLines
    
-   -- added BN
+   # added BN
    local tHandlerTypeNum = 0
    if tAvgPrivateCommandLines > 0 then add 1 to tHandlerTypeNum
    if tAvgPublicCommandLines > 0 then add 1 to tHandlerTypeNum
    if tAvgPrivateFunctionLines > 0 then add 1 to tHandlerTypeNum
    if tAvgPublicFunctionLines > 0 then add 1 to tHandlerTypeNum
-   -- end added BN
+   # end added BN
    
    put tAverageLines / max(tHandlerTypeNum, 1) into tAverageLines -- changed BN
    put tComplexity / max(tHandlerTypeNum, 1) into tAverageComplexity -- changed BN
@@ -2946,12 +3498,12 @@ private function totalLinesOf pHandlers, pScript
    repeat for each line tHandler in pHandlers
       put item 3 of tHandler into tStart
       put item 4 of tHandler into tEnd
-      -- changed BN to omit handler declaration from code line count
+      # changed BN to omit handler declaration from code line count
       put line tStart+1 to tEnd-1 of pScript into tText
-      -- remove block comments
+      # remove block comments
       put replaceText(tText, "\/\*(\*(?!\/)|[^*])*\*\/", "") into tText
       filter tText without empty # remove blank lines
-      -- remove comment lines
+      # remove comment lines
       repeat for each line tLine in tText
          put token 1 to -1 of tLine into tLine
          if tLine is empty then
@@ -2991,61 +3543,61 @@ local sUndoPointArray
 *
 * pStack contains the short name of the stack
 */
-private command Undo.Reset pStack
-    local tKeys
-    
-    -- pStack contains the short name of the stack
-    put the long id of pStack into pStack
-    put the keys of sUndoPointArray into tKeys
-    repeat for each line tObject in tKeys
-        -- see if we're editing an object of the stack we're saving
-        if word -1 of pStack is word -1 of tObject then
-            -- set the save pointer if so
-            Undo.SetSavePointer tObject
-        end if
-    end repeat
-end Undo.Reset
+private command undo.Reset pStack
+   local tKeys
+   
+   # pStack contains the short name of the stack
+   put the long id of pStack into pStack
+   put the keys of sUndoPointArray into tKeys
+   repeat for each line tObject in tKeys
+      # see if we're editing an object of the stack we're saving
+      if word -1 of pStack is word -1 of tObject then
+         # set the save pointer if so
+         Undo.SetSavePointer tObject
+      end if
+   end repeat
+end undo.Reset
 
 /**
 * Undo.Retrieve
 *
 * Retrive an element from the sUndoPointArray
 */
-private function Undo.Retrieve pObject, pCount
+private function undo.Retrieve pObject, pCount
    local tData
    
    set the itemdelimiter to comma
    put sUndoPointArray[pObject]["data"][pCount] into tData
    return tData
-end Undo.Retrieve
+end undo.Retrieve
 
 /**
 * Undo.Store
 *
 * Store an element into the sUndoPointArray
 */
-private command Undo.Store pObject, pCount, pValue
+private command undo.Store pObject, pCount, pValue
    set the itemdelimiter to comma
    put pValue into sUndoPointArray[pObject]["data"][pCount]
    if pCount is among the items of "count,save" then
    else
       put the selectedChunk into sUndoPointArray[pObject]["selection"][pCount]
    end if
-end Undo.Store
+end undo.Store
 
-private function Undo.SelectPointer pObject, pCount
+private function undo.SelectPointer pObject, pCount
    local tData
    
    put sUndoPointArray[pObject]["selection"][pCount] into tData
    return tData
-end Undo.SelectPointer
+end undo.SelectPointer
 
 /**
 * UndoPointer
 *
 * Return the undo stack index
 */
-private function Undo.Pointer pObject, pShouldCheckSave
+private function undo.Pointer pObject, pShouldCheckSave
    local tCount, tSave
    
    if pShouldCheckSave then
@@ -3064,25 +3616,25 @@ private function Undo.Pointer pObject, pShouldCheckSave
       end if
    end if
    return tCount
-end Undo.Pointer
+end undo.Pointer
 
 /**
 * Undo.SetPointer
 *
 * @pNewCount : index value for this type of undo action
 */
-private command Undo.SetPointer pObject, pNewCount
+private command undo.SetPointer pObject, pNewCount
    Undo.Store pObject, "count", pNewCount
-end Undo.SetPointer
+end undo.SetPointer
 
 /**
 * Undo.SetPointer
 *
 * @pNewCount : index value for this type of undo action
 */
-private command Undo.SetSavePointer pObject
+private command undo.SetSavePointer pObject
    Undo.Store pObject, "save", Undo.Retrieve(pObject, "count")
-end Undo.SetSavePointer
+end undo.SetSavePointer
 
 /**
 * Undo.Push
@@ -3090,7 +3642,7 @@ end Undo.SetSavePointer
 * Increment the index pointer (++push)
 * Then save the current script for undoing later on
 */
-private command Undo.Push pObject
+private command undo.Push pObject
    local tCount
    
    put CurrentObjectID() into pObject
@@ -3098,7 +3650,7 @@ private command Undo.Push pObject
    put Undo.Pointer(pObject, false)+1 into tCount
    Undo.Store pObject, tCount, compress(scriptFromEditor())
    Undo.SetPointer pObject, tCount -- bump the index pointer
-end Undo.Push
+end undo.Push
 
 /**
 * Undo.Pop
@@ -3107,24 +3659,24 @@ end Undo.Push
 * Retrieve the current stored data
 * Decrement the index pointer afterwards (pop--)
 */
-private command Undo.Pop pObject, pFunc
+private command undo.Pop pObject, pFunc
    local tCount
    local tSavedUndo
    local tSuccess
    
    lock screen
-   -- retrieve the current pointer
+   # retrieve the current pointer
    put CurrentObjectID() into pObject
    put the long id of pObject into pObject
    put Undo.Pointer(pObject, true) into tCount
    if tCount > 0 then
-      -- see if we're at the top of the stack
+      # see if we're at the top of the stack
       put Undo.Retrieve(pObject, tCount+1) into tSavedUndo
-      -- if so, save the current state so we can redo
+      # if so, save the current state so we can redo
       if tSavedUndo is empty then
          Undo.Store pObject, tCount+1,  compress(scriptFromEditor())
       end if
-      -- retrieve the stored data
+      # retrieve the stored data
       put Undo.Retrieve(pObject, tCount) into tSavedUndo
       
       if tSavedUndo is not empty then
@@ -3133,7 +3685,7 @@ private command Undo.Pop pObject, pFunc
          if tCount is 1 then
             setSEDirtyFlagFor pObject, false
          end if
-         -- decrement the stack pointer
+         # decrement the stack pointer
          Undo.SetPointer pObject, tCount-1
          put true into tSuccess
       end if
@@ -3143,16 +3695,16 @@ private command Undo.Pop pObject, pFunc
    else
       switch tCount
          case 0
-            -- at bottom of undo stack
+            # at bottom of undo stack
             answer "nothing to undo"
             break
          case -1
-            -- not undoing past last save
+            # not undoing past last save
             break
          default
       end switch
    end if
-end Undo.Pop
+end undo.Pop
 
 /**
 * RedoRefactor
@@ -3161,14 +3713,14 @@ end Undo.Pop
 * Increment the index pointer (++redo)
 * Retrieve the stored data at that index
 */
-private command DoRedo pObject, pFunc
+private command doRedo pObject, pFunc
    local tCount
    local tSavedUndo
    local tSuccess?
    
    put false into tSuccess?
    lock screen
-   -- increment the stack pointer
+   # increment the stack pointer
    put CurrentObjectID() into pObject
    put Undo.Pointer(pObject, false)+2 into tCount
    put Undo.Retrieve(pObject, tCount) into tSavedUndo
@@ -3179,7 +3731,7 @@ private command DoRedo pObject, pFunc
    
    if tSavedUndo is not empty then
       dispatch pFunc to the target with pObject, tCount, tSavedUndo
-      -- store the new stack pointer
+      # store the new stack pointer
       Undo.SetPointer pObject, tCount-1
       put true into tSuccess?
    end if
@@ -3188,23 +3740,23 @@ private command DoRedo pObject, pFunc
    else
       answer "nothing to redo @" && tCount
    end if
-end DoRedo
+end doRedo
 
-private command Undo.RestoreScript pObject, tCount, pScript
+private command undo.RestoreScript pObject, pCount, pScript
    local tSelection
    
    StoreScrollsOfCard
    
    SetScript decompress(pScript), pObject
    RestoreScrollsOfCard
-   -- retrieve the previous selection
-   put Undo.SelectPointer(pObject, tCount) into tSelection
+   # retrieve the previous selection
+   put Undo.SelectPointer(pObject, pCount) into tSelection
    if tSelection is not empty then
       select tSelection
    end if
-end Undo.RestoreScript
+end undo.RestoreScript
 
-private function CurrentObjectID
+private function currentObjectID
    local tObject
    
    dispatch function "glx2IsInUse"
@@ -3213,13 +3765,13 @@ private function CurrentObjectID
    else
       dispatch "getCurrentTab" to group "Script Tabs" of stack "revNewScriptEditor 1"
    end if
-   -- NOTE: getCurrentTab returns the object reference as a rugged ID
+   # NOTE: getCurrentTab returns the object reference as a rugged ID
    put the result into tObject
    return tObject
-end CurrentObjectID
+end currentObjectID
 
--- if the stackrunner is not being used, then ensure *something* works
--- note that empty is true
+# if the stackrunner is not being used, then ensure *something* works
+# note that empty is true
 command assertIsTrue pExpression
    return pExpression is not false
 end assertIsTrue
@@ -3228,12 +3780,18 @@ on localNotificationReceived pMessage
    
 end localNotificationReceived
 
--- timing for debugging handlers
+# timing for debugging handlers
 
 private command logStartTime
    put the milliseconds into sTime
 end logStartTime
 
 private command logTime
-   put the milliseconds - sTime & cr after msg
+   dbgRefactorlog the milliseconds - sTime
 end logTime
+
+private command dbgRefactorlog pMessage
+   if kDebugLog? then
+      put pMessage & cr after msg
+   end if
+end dbgRefactorlog
